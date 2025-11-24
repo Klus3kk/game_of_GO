@@ -21,6 +21,7 @@ Architecture:
 
 # Server example layout
 
+<!--
 |-------------|-----------------------------------|
 |   PLAYERS   |               GAMES               |
 |             |                                   |
@@ -32,7 +33,7 @@ Architecture:
 |             |                                   |
 |             |                                   |
 |_____________|___________________________________|
-
+-->
 
 # Client example layout
 
