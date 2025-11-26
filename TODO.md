@@ -10,8 +10,7 @@
 * infinite board sizes (well...maybe 32x32 max)
 * **server - moves validation, notifications about the games, detection of player (with the state of him, if hes disconnected)**
 
-
-Architecture:
+# Architecture:
 * use bsd-sockets
 * client-server architecture
 * client can be created with any programming language 
