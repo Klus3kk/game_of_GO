@@ -1,3 +1,5 @@
+// test for drawing the board and placements
+
 #include <stdio.h>
 #include <stdlib.h>
 

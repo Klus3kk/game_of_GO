@@ -47,8 +47,7 @@ void board_clear(Board *b) {
 // Setting cell at (x,y) to value c
 int board_set(Board *b, int x, int y, Cell c) {
     // Check for out of bounds
-    if (x < 0 || y < 0 || x >= b->size || y >= b->size) 
-        return -1; 
+    if (x < 0 || y < 0 || x >= b->size || y >= b->size) return -1; 
 
     b->cells[idx(b, x, y)] = c;  
     return 0; 
@@ -57,16 +56,41 @@ int board_set(Board *b, int x, int y, Cell c) {
 // Getting the cell value at (x,y)
 Cell board_get(const Board *b, int x, int y) {
     // Check for out of bounds
-    if (x < 0 || y < 0 || x >= b->size || y >= b->size) 
-        return CELL_EMPTY; 
+    if (x < 0 || y < 0 || x >= b->size || y >= b->size) return CELL_EMPTY; 
 
     return b->cells[idx(b, x, y)];  // Return the cell value
 }
 
 
 // Drawing the board (its a test for now, i will change it later)
+
+// OLD ONE
+// void board_draw_ascii(const Board *b) {
+//     printf("\n   ");
+//     for (int x = 0; x < b->size; x++)
+//         printf("%2d", x);
+//     printf("\n");
+
+//     for (int y = 0; y < b->size; y++) {
+//         printf("%2d ", y);
+//         for (int x = 0; x < b->size; x++) {
+//             char ch = '.';
+//             switch (board_get(b, x, y)) {
+//                 case CELL_EMPTY: ch = '.'; break;
+//                 case CELL_BLACK: ch = 'B'; break;
+//                 case CELL_WHITE: ch = 'W'; break;
+//                 case CELL_CURSOR: ch = 'C'; break;
+//                 case CELL_SELECT: ch = 'S'; break;
+//                 default: ch = '?'; break;
+//             }
+//             printf(" %c", ch);
+//         }
+//         printf("\n");
+//     }
+// }
+
 void board_draw_ascii(const Board *b) {
-    printf("\n   ");
+    printf("   ");
     for (int x = 0; x < b->size; x++)
         printf("%2d", x);
     printf("\n");
@@ -74,15 +98,17 @@ void board_draw_ascii(const Board *b) {
     for (int y = 0; y < b->size; y++) {
         printf("%2d ", y);
         for (int x = 0; x < b->size; x++) {
+
             char ch = '.';
-            switch (board_get(b, x, y)) {
-                case CELL_EMPTY: ch = '.'; break;
-                case CELL_BLACK: ch = 'B'; break;
-                case CELL_WHITE: ch = 'W'; break;
-                case CELL_CURSOR: ch = 'C'; break;
-                case CELL_SELECT: ch = 'S'; break;
-                default: ch = '?'; break;
+            Cell c = board_get(b, x, y);
+
+            if (x == b->cur_x && y == b->cur_y) {
+                ch = '@';    // the current icon for cursor (i will change it later for more cursor-looking one)
+            } else {
+                if (c == CELL_BLACK) ch = 'X';
+                else if (c == CELL_WHITE) ch = 'O';
             }
+
             printf(" %c", ch);
         }
         printf("\n");
