@@ -17,6 +17,8 @@ Board* board_create(int size) {
 
     b->size = size; 
     b->cells = (Cell *)malloc(size * size * sizeof(Cell));
+    b->cur_x = 0; 
+    b->cur_y = 0;
     
     // Check if memory allocation for cells was successful
     if (!b->cells) {

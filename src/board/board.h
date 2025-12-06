@@ -12,6 +12,9 @@ typedef enum {
 typedef struct {
     int size; // board size (lets say 7x7 is the smallest)
     Cell *cells; // pointer to array of cells
+
+    int cur_x; // positon x
+    int cur_y; // position y
 } Board;
 
 Board* board_create(int size); // creating a board of given size 
