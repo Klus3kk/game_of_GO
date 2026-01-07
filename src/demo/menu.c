@@ -119,3 +119,99 @@ static void draw_main_menu(int selected) {
 
     refresh();
 }
+
+static void draw_settings_screen(const Settings *st, int selected) {
+    clear();
+    int base_y = 2;
+
+    draw_logo(base_y);
+    int y = base_y + 16;
+
+    attron(COLOR_PAIR(5) | A_BOLD);
+    center_print(y, "SETTINGS");
+    attroff(COLOR_PAIR(5) | A_BOLD);
+    y += 2;
+
+    attron(COLOR_PAIR(6));
+    center_print(y, "Space: toggle  |  Enter: edit/select  |  Q/ESC: back");
+    attroff(COLOR_PAIR(6));
+    y += 2;
+
+    // Layout
+    int left = (COLS - 40) / 2;
+    if (left < 0) left = 0;
+
+    attron(COLOR_PAIR(5) | A_BOLD);
+    mvprintw(y, left, "BASIC");
+    attroff(COLOR_PAIR(5) | A_BOLD);
+    y += 2;
+
+    const char *mouse_line = st->mouse_support ? "[x] Mouse Support" : "[ ] Mouse Support";
+    const char *col_line   = st->colours       ? "[x] Colours"       : "[ ] Colours";
+
+    const char *lines_basic[] = { mouse_line, col_line };
+    for (int i = 0; i < 2; i++) {
+        if (selected == i) attron(COLOR_PAIR(3) | A_BOLD);
+        mvprintw(y + i, left, "%s", lines_basic[i]);
+        if (selected == i) attroff(COLOR_PAIR(3) | A_BOLD);
+    }
+    y += 3;
+
+    attron(COLOR_PAIR(5) | A_BOLD);
+    mvprintw(y, left, "THEMES");
+    attroff(COLOR_PAIR(5) | A_BOLD);
+    y += 2;
+
+    // themes
+    for (int i = 0; i < 3; i++) {
+        char tline[64];
+        snprintf(tline, sizeof(tline), "[%c] Theme %d", (st->theme == i ? 'x' : ' '), i + 1);
+        int idx = 2 + i;
+        if (selected == idx) attron(COLOR_PAIR(3) | A_BOLD);
+        mvprintw(y + i, left, "%s", tline);
+        if (selected == idx) attroff(COLOR_PAIR(3) | A_BOLD);
+    }
+    y += 4;
+
+    attron(COLOR_PAIR(5) | A_BOLD);
+    mvprintw(y, left, "NICKNAME");
+    attroff(COLOR_PAIR(5) | A_BOLD);
+    y += 2;
+
+    char nline[64];
+    snprintf(nline, sizeof(nline), "%s", st->nickname[0] ? st->nickname : "(not set)");
+    int nick_idx = 5;
+    if (selected == nick_idx) attron(COLOR_PAIR(3) | A_BOLD);
+    mvprintw(y, left, "%s", nline);
+    if (selected == nick_idx) attroff(COLOR_PAIR(3) | A_BOLD);
+
+    refresh();
+}
+
+static void edit_nickname(Settings *st) {
+    int left = (COLS - 40) / 2;
+    if (left < 0) left = 0;
+    int y = LINES - 3;
+
+    attron(COLOR_PAIR(6));
+    mvprintw(y, left, "Enter nickname (max 31 chars): ");
+    attroff(COLOR_PAIR(6));
+    clrtoeol();
+
+    echo();
+    curs_set(1);
+
+    char buf[32] = {0};
+    // ncurses input
+    mvgetnstr(y, left + 31, buf, 31);
+
+    for (int i = 0; buf[i]; i++) {
+        if ((unsigned char)buf[i] <= 32) { buf[i] = '\0'; break; }
+    }
+    strncpy(st->nickname, buf, sizeof(st->nickname) - 1);
+    st->nickname[sizeof(st->nickname) - 1] = '\0';
+
+    noecho();
+    curs_set(0);
+}
+
