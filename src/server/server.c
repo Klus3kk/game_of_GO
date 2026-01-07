@@ -86,7 +86,7 @@ static int add_client(Client clients[], int fd, struct sockaddr_in *peer) {
             // default nick: u<fd>
             snprintf(clients[i].nick, sizeof(clients[i].nick), "u%d", fd);
 
-            send_fmt(fd, "WELCOME ", "type: NICK <name> | LIST | PING | QUIT");
+            send_fmt(fd, "WELCOME ", "type: NICK <name> | GAMES | HOST <size> | JOIN <id> | QUIT");
             return i;
         }
     }
@@ -154,11 +154,6 @@ static void handle_line(Client clients[], int idx, char *line) {
     rstrip(line);
 
     if (line[0] == '\0') return;
-
-    if (strcmp(line, "LIST") == 0) {
-        list_clients(clients, c->fd);
-        return;
-    }
 
     if (strncmp(line, "NICK ", 5) == 0) {
         const char *name = line + 5;
@@ -265,9 +260,7 @@ static void handle_line(Client clients[], int idx, char *line) {
         return;
     }
 
-
-    // default echo
-    send_fmt(c->fd, "OK ECHO ", line);
+    send_fmt(c->fd, "ERR ", "unknown command");
 }
 
 static void process_client_data(Client clients[], int idx) {
@@ -277,12 +270,13 @@ static void process_client_data(Client clients[], int idx) {
     // read into buffer tail
     ssize_t r = recv(c->fd, c->buf + c->len, (size_t)(BUF_SIZE - c->len), 0);
     if (r == 0) {
-        // disconnected
+        remove_games_of_client(c->fd);
         client_close(c);
         return;
     }
     if (r < 0) {
         if (errno == EINTR) return;
+        remove_games_of_client(c->fd);
         client_close(c);
         return;
     }
