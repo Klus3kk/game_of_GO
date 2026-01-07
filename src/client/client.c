@@ -57,7 +57,8 @@ int main(int argc, char **argv) {
     if (connect(sock, (struct sockaddr *)&serv, sizeof(serv)) < 0) fatal_error("connect");
 
     printf("Connected to %s:%d\n", host, port);
-    printf("Type commands (e.g. NICK <nick> \\ LIST \\ QUIT)\n");
+    printf("Type commands (e.g. NICK <nick> \\ GAMES \\ HOST <size> \\ JOIN <id> \\ QUIT)\n");
+
 
     while (1) {
         fd_set rfds;

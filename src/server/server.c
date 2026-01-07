@@ -20,6 +20,23 @@
 #define MAX_CLIENTS 50
 #define BUF_SIZE 4096
 #define NICK_SIZE 32
+#define MAX_GAMES 50
+
+typedef enum { GAME_OPEN, GAME_RUNNING } GameStatus;
+
+typedef struct {
+    int id;
+    int size;         // board size
+    int host_fd;      // who created
+    int guest_fd;     // -1 if none
+    GameStatus status;
+} Game;
+
+static Game games[MAX_GAMES];
+static int game_count = 0;
+static int next_game_id = 1;
+
+
 
 typedef struct {
     int fd;                  // -1 if unused
@@ -103,6 +120,25 @@ static void fatal_error(const char *msg) {
     exit(1);
 }
 
+static Game *find_game_by_id(int id) {
+    for (int i = 0; i < game_count; i++) {
+        if (games[i].id == id)
+            return &games[i];
+    }
+    return NULL;
+}
+
+static void remove_games_of_client(int fd) {
+    for (int i = 0; i < game_count; ) {
+        if (games[i].host_fd == fd || games[i].guest_fd == fd) {
+            games[i] = games[game_count - 1];
+            game_count--;
+        } else {
+            i++;
+        }
+    }
+}
+
 // Remove trailing \n and \r
 static void rstrip(char *s) {
     size_t n = strlen(s);
@@ -151,6 +187,84 @@ static void handle_line(Client clients[], int idx, char *line) {
         client_close(c);
         return;
     }
+
+    if (strcmp(line, "GAMES") == 0) {
+        send_str(c->fd, "GAMES_BEGIN\n");
+
+        for (int i = 0; i < game_count; i++) {
+            char buf[128];
+            const char *status =
+                (games[i].status == GAME_OPEN) ? "OPEN" : "RUNNING";
+
+            int players = (games[i].guest_fd == -1) ? 1 : 2;
+
+            snprintf(buf, sizeof(buf),
+                    "GAME %d %d %d %s\n",
+                    games[i].id,
+                    games[i].size,
+                    players,
+                    status);
+
+            send_str(c->fd, buf);
+        }
+
+        send_str(c->fd, "GAMES_END\n");
+        return;
+    }
+
+    if (strncmp(line, "HOST ", 5) == 0) {
+        int size = atoi(line + 5);
+
+        if (size < 7 || size > 19 || size % 2 == 0) {
+            send_str(c->fd, "ERR invalid board size\n");
+            return;
+        }
+
+        if (game_count >= MAX_GAMES) {
+            send_str(c->fd, "ERR server full\n");
+            return;
+        }
+
+        Game *g = &games[game_count++];
+        g->id = next_game_id++;
+        g->size = size;
+        g->host_fd = c->fd;
+        g->guest_fd = -1;
+        g->status = GAME_OPEN;
+
+        char buf[64];
+        snprintf(buf, sizeof(buf), "HOSTED %d\n", g->id);
+        send_str(c->fd, buf);
+        return;
+    }
+
+    if (strncmp(line, "JOIN ", 5) == 0) {
+        int id = atoi(line + 5);
+        Game *g = find_game_by_id(id);
+
+        if (!g) {
+            send_str(c->fd, "ERR no such game\n");
+            return;
+        }
+
+        if (g->status != GAME_OPEN || g->guest_fd != -1) {
+            send_str(c->fd, "ERR game not available\n");
+            return;
+        }
+
+        if (g->host_fd == c->fd) {
+            send_str(c->fd, "ERR cannot join own game\n");
+            return;
+        }
+
+        g->guest_fd = c->fd;
+        g->status = GAME_RUNNING;
+
+        send_str(g->host_fd, "JOINED BLACK\n");
+        send_str(g->guest_fd, "JOINED WHITE\n");
+        return;
+    }
+
 
     // default echo
     send_fmt(c->fd, "OK ECHO ", line);
