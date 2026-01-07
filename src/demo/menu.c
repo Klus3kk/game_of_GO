@@ -46,7 +46,7 @@ static int read_nav_key(int ch) {
     if (ch == KEY_LEFT || ch == 'a' || ch == 'A') return 100;
     if (ch == KEY_RIGHT || ch == 'd' || ch == 'D') return 101;
     if (ch == 10 || ch == KEY_ENTER) return 10;
-    if (ch == 27 || ch == 'q' || ch == 'Q') return 27; // ESC or q
+    if (ch == 27) return 27; // ESC 
     return 0;
 }
 
@@ -215,3 +215,120 @@ static void edit_nickname(Settings *st) {
     curs_set(0);
 }
 
+static void draw_play_screen(int selected) {
+    clear();
+    int base_y = 2;
+
+    draw_logo(base_y);
+    int y = base_y + 16;
+
+    attron(COLOR_PAIR(5) | A_BOLD);
+    center_print(y, "PLAY");
+    attroff(COLOR_PAIR(5) | A_BOLD);
+    y += 2;
+
+    attron(COLOR_PAIR(6));
+    center_print(y, "Enter: select  |  Q/ESC: back");
+    attroff(COLOR_PAIR(6));
+    y += 3;
+
+    const char *items[] = {"HOST", "JOIN", "START"};
+    int n = 3;
+
+    for (int i = 0; i < n; i++) {
+        int row = y + i * 2;
+        if (i == selected) {
+            attron(COLOR_PAIR(3) | A_BOLD);
+            center_print(row, items[i]);
+            attroff(COLOR_PAIR(3) | A_BOLD);
+        } else {
+            attron(COLOR_PAIR(2));
+            center_print(row, items[i]);
+            attroff(COLOR_PAIR(2));
+        }
+    }
+
+    // Placeholder info
+    attron(COLOR_PAIR(6));
+    center_print(LINES - 2, "HOST/JOIN will later connect to the server. START will begin matchmaking.");
+    attroff(COLOR_PAIR(6));
+
+    refresh();
+}
+
+int main(void) {
+    Settings st = {.mouse_support = true, .colours = true, .theme = 0, .nickname = "u1"};
+    Screen screen = SCREEN_MAIN;
+    int sel_main = 0;
+    int sel_settings = 0; // [0..5]
+    int sel_play = 0;
+
+    init_ui();
+
+    bool running = true;
+    while (running) {
+        if (screen == SCREEN_MAIN) {
+            draw_main_menu(sel_main);
+            int ch = getch();
+            int nav = read_nav_key(ch);
+
+            if (nav == -1) sel_main = (sel_main + 2) % 3;
+            else if (nav == +1) sel_main = (sel_main + 1) % 3;
+            else if (nav == 10) {
+                if (sel_main == 0) screen = SCREEN_PLAY;
+                else if (sel_main == 1) screen = SCREEN_SETTINGS;
+                else running = false;
+            } else if (nav == 27) {
+                running = false;
+            }
+        }
+        else if (screen == SCREEN_SETTINGS) {
+            draw_settings_screen(&st, sel_settings);
+            int ch = getch();
+            int nav = read_nav_key(ch);
+
+            if (nav == 27) {
+                screen = SCREEN_MAIN;
+                continue;
+            }
+
+            if (nav == -1) sel_settings = (sel_settings + 5) % 6;
+            else if (nav == +1) sel_settings = (sel_settings + 1) % 6;
+            else if (ch == ' ') {
+                // toggle
+                if (sel_settings == 0) st.mouse_support = !st.mouse_support;
+                else if (sel_settings == 1) st.colours = !st.colours;
+                else if (sel_settings >= 2 && sel_settings <= 4) st.theme = sel_settings - 2;
+            } else if (nav == 10) {
+                if (sel_settings == 5) edit_nickname(&st);
+                else if (sel_settings == 0) st.mouse_support = !st.mouse_support;
+                else if (sel_settings == 1) st.colours = !st.colours;
+                else if (sel_settings >= 2 && sel_settings <= 4) st.theme = sel_settings - 2;
+            }
+        }
+        else if (screen == SCREEN_PLAY) {
+            draw_play_screen(sel_play);
+            int ch = getch();
+            int nav = read_nav_key(ch);
+
+            if (nav == 27) {
+                screen = SCREEN_MAIN;
+                continue;
+            }
+
+            if (nav == -1) sel_play = (sel_play + 2) % 3;
+            else if (nav == +1) sel_play = (sel_play + 1) % 3;
+            else if (nav == 10) {
+                // todo (i need to make lobbies here i think)
+                attron(COLOR_PAIR(4) | A_BOLD);
+                center_print(LINES - 4, "OK (placeholder) - networking will be wired next.");
+                attroff(COLOR_PAIR(4) | A_BOLD);
+                refresh();
+                napms(500);
+            }
+        }
+    }
+
+    shutdown_ui();
+    return 0;
+}
