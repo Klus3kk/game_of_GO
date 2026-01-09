@@ -13,3 +13,5 @@ void broadcast_subscribed(Client clients[], const char *msg);
 
 // handle disconnect-on-send
 int safe_send(Client clients[], int fd, const char *msg);
+void send_board_safe(Client clients[], Game *g);
+void send_captures_safe(Client clients[], Game *g);

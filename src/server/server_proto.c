@@ -61,3 +61,31 @@ void send_captures(Game *g) {
     send_str(g->host_fd, msg);
     if (g->guest_fd != -1) send_str(g->guest_fd, msg);
 }
+
+void send_board_safe(Client clients[], Game *g) {
+    char msg[BUF_SIZE];
+    int n = g->size * g->size;
+    const char *tm = (g->to_move == 0) ? "BLACK" : "WHITE";
+
+    int k = snprintf(msg, sizeof(msg), "BOARD %d %s ", g->id, tm);
+    if (k < 0) return;
+
+    for (int i = 0; i < n && k + 2 < (int)sizeof(msg); i++) {
+        char c = '.';
+        if (g->board[i] == 1) c = 'B';
+        else if (g->board[i] == 2) c = 'W';
+        msg[k++] = c;
+    }
+    if (k + 1 < (int)sizeof(msg)) msg[k++] = '\n';
+    msg[k] = '\0';
+
+    safe_send(clients, g->host_fd, msg);
+    if (g->guest_fd != -1) safe_send(clients, g->guest_fd, msg);
+}
+
+void send_captures_safe(Client clients[], Game *g) {
+    char msg[128];
+    snprintf(msg, sizeof(msg), "CAPTURES %d %d %d\n", g->id, g->cap_black, g->cap_white);
+    safe_send(clients, g->host_fd, msg);
+    if (g->guest_fd != -1) safe_send(clients, g->guest_fd, msg);
+}

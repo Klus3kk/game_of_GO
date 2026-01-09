@@ -203,6 +203,31 @@ int cancel_open_games_of_host(Client clients[], int host_fd) {
     return removed_any;
 }
 
+void remove_single_game_of_client(Client clients[], int fd, int gid, const char *reason) {
+    for (int i = 0; i < game_count; i++) {
+        if (games[i].id != gid) continue;
+        if (games[i].host_fd != fd && games[i].guest_fd != fd) return;
+
+        if (games[i].status == GAME_RUNNING) {
+            int opp = opponent_fd(&games[i], fd);
+            if (opp != -1) {
+                int opp_color = fd_color_in_game(&games[i], opp);
+                send_game_over(opp, games[i].id, color_name(opp_color), reason);
+            }
+        }
+
+        int removed_id = games[i].id;
+        games[i] = games[game_count - 1];
+        game_count--;
+
+        char ev[64];
+        snprintf(ev, sizeof(ev), "EVENT GAME_REMOVED %d\n", removed_id);
+        broadcast_subscribed(clients, ev);
+        return;
+    }
+}
+
+
 int create_game(Client clients[], int host_fd, int size, char pref) {
     if (game_count >= MAX_GAMES) return -1;
     if (host_has_game(host_fd)) return -2;
@@ -231,3 +256,33 @@ int create_game(Client clients[], int host_fd, int size, char pref) {
 
     return g->id;
 }
+int leave_game(Client clients[], int fd, int gid, const char *reason) {
+    for (int i = 0; i < game_count; i++) {
+        if (games[i].id != gid) continue;
+
+        // must be player in this game
+        if (games[i].host_fd != fd && games[i].guest_fd != fd) return -2;
+
+        int removed_id = games[i].id;
+
+        if (games[i].status == GAME_RUNNING) {
+            int opp = opponent_fd(&games[i], fd);
+            if (opp != -1) {
+                int opp_color = fd_color_in_game(&games[i], opp);
+                send_game_over(opp, removed_id, color_name(opp_color), reason);
+            }
+        }
+
+        // remove game
+        games[i] = games[game_count - 1];
+        game_count--;
+
+        char ev[64];
+        snprintf(ev, sizeof(ev), "EVENT GAME_REMOVED %d\n", removed_id);
+        broadcast_subscribed(clients, ev);
+
+        return 1;
+    }
+    return 0; // no such game
+}
+

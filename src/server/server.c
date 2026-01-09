@@ -276,6 +276,24 @@ static void handle_line(Client clients[], int idx, char *line) {
         return;
     }
 
+    if (strncmp(line, "LEAVE ", 6) == 0) {
+        int id;
+        if (sscanf(line, "LEAVE %d", &id) != 1) {
+            send_str(c->fd, "ERR usage: LEAVE <id>\n");
+            return;
+        }
+
+        int r = leave_game(clients, c->fd, id, "LEAVE");
+        if (r == 0) { send_str(c->fd, "ERR no such game\n"); return; }
+        if (r == -2) { send_str(c->fd, "ERR not in that game\n"); return; }
+
+        // opcjonalnie: potwierdzenie dla wychodzącego
+        send_str(c->fd, "OK LEFT\n");
+        return;
+    }
+
+
+
     if (strncmp(line, "MOVE ", 5) == 0) {
         int id, x, y;
         if (sscanf(line, "MOVE %d %d %d", &id, &x, &y) != 3) {
@@ -347,8 +365,10 @@ static void handle_line(Client clients[], int idx, char *line) {
         send_str(g->host_fd, msg);
         send_str(g->guest_fd, msg);
 
-        send_board(g);
-        send_captures(g);
+        // send_board(g);
+        // send_captures(g);
+        send_board_safe(clients, g);
+        send_captures_safe(clients, g);
         return;
     }
 

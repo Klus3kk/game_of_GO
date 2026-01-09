@@ -6,3 +6,5 @@ serwer
 menu
 .vscode
 klient_ui
+server.o$
+client.o$

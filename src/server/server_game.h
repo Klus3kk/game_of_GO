@@ -62,3 +62,5 @@ int remove_group(Game *g, const int *stones, int count);
 void list_games(Client clients[], int to_fd);
 int cancel_open_games_of_host(Client clients[], int host_fd);
 int create_game(Client clients[], int host_fd, int size, char pref);
+void remove_single_game_of_client(Client clients[], int fd, int gid, const char *reason);
+int leave_game(Client clients[], int fd, int gid, const char *reason);
