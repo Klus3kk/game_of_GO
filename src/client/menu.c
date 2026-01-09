@@ -1,7 +1,10 @@
-#include <ncurses.h>
-#include <string.h>
-#include <ctype.h>
+#include "net.h"
+#include "lobby.h"
+#include <sys/select.h>
 #include <stdbool.h>
+#include <string.h>
+#include <ncurses.h>
+#include <ctype.h>
 
 typedef enum {
     SCREEN_MAIN = 0,
@@ -15,6 +18,11 @@ typedef struct {
     int theme;               // 0..2
     char nickname[32];
 } Settings;
+
+static Net net;
+static Lobby lobby;
+static int net_ready = 0; // 1 if connected
+static int syncing = 0; // 1 for being berween GAMES_BEGIN and GAMES_END
 
 static void init_ui(void) {
     initscr();
@@ -228,7 +236,7 @@ static void draw_play_screen(int selected) {
     y += 2;
 
     attron(COLOR_PAIR(6));
-    center_print(y, "Enter: select  |  Q/ESC: back");
+    center_print(y, "Enter: select  //  Q/ESC: back");
     attroff(COLOR_PAIR(6));
     y += 3;
 
@@ -248,10 +256,136 @@ static void draw_play_screen(int selected) {
         }
     }
 
-    // Placeholder info
+    refresh(); // this should work so that it refreshes every 5-10 seconds for example, or, even better, if the user presses a key like 'r' for refresh
+}
+
+static int ensure_connected(void) {
+    if (net_ready) return 1;
+
+    if (net_connect(&net, "127.0.0.1", 1984) < 0) return 0;  // failure
+    net_ready = 1;
+
+    net_send_line(&net, "SUB");
+    net_send_line(&net, "GAMES");
+    return 1;
+}
+
+static void parse_server_line(const char *line) {
+    if (strcmp(line, "GAMES_BEGIN") == 0) {
+        lobby_clear(&lobby);
+        syncing = 1;
+        return;
+    }
+    if (strcmp(line, "GAMES_END") == 0) {
+        syncing = 0;
+        return;
+    }
+
+    int id=0,size=0,players=0;
+    char st[32];
+
+    if (sscanf(line, "GAME %d %d %d %31s", &id, &size, &players, st) == 4) {
+        LobbyStatus s = (strcmp(st, "RUNNING") == 0) ? LOBBY_RUNNING : LOBBY_OPEN;
+        lobby_upsert(&lobby, id, size, players, s);
+        return;
+    }
+
+    if (sscanf(line, "EVENT GAME_CREATED %d %d", &id, &size) == 2) {
+        lobby_upsert(&lobby, id, size, 1, LOBBY_OPEN);
+        return;
+    }
+    if (sscanf(line, "EVENT GAME_STARTED %d", &id) == 1) {
+        lobby_set_running(&lobby, id);
+        return;
+    }
+    if (sscanf(line, "EVENT GAME_REMOVED %d", &id) == 1) {
+        lobby_remove(&lobby, id);
+        return;
+    }
+}
+
+static void pump_network(void) {
+    if (!net_ready) return;
+
+    fd_set rfds;
+    FD_ZERO(&rfds);
+    FD_SET(net.fd, &rfds);
+
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+
+    int rc = select(net.fd + 1, &rfds, NULL, NULL, &tv);
+    if (rc <= 0) return;
+
+    if (FD_ISSET(net.fd, &rfds)) {
+        int ok = net_recv_into_buffer(&net);
+        if (ok <= 0) {
+            net_close(&net);
+            net_ready = 0;
+            return;
+        }
+
+        char line[1024];
+        while (net_next_line(&net, line, sizeof(line))) {
+            parse_server_line(line);
+        }
+    }
+}
+
+static void draw_play_lobby(void) {
+    clear();
+    int base_y = 2;
+
+    draw_logo(base_y);
+    int y = base_y + 16;
+
+    attron(COLOR_PAIR(5) | A_BOLD);
+    center_print(y, "PLAY");
+    attroff(COLOR_PAIR(5) | A_BOLD);
+    y += 2;
+
     attron(COLOR_PAIR(6));
-    center_print(LINES - 2, "HOST/JOIN will later connect to the server. START will begin matchmaking.");
+    center_print(y, "Enter=JOIN  H=HOST  R=REFRESH  Q/ESC=BACK");
     attroff(COLOR_PAIR(6));
+    y += 2;
+
+    if (!net_ready) {
+        attron(COLOR_PAIR(6));
+        center_print(y + 2, "Not connected to server.");
+        attroff(COLOR_PAIR(6));
+        refresh();
+        return;
+    }
+
+    int left = (COLS - 44) / 2;
+    if (left < 0) left = 0;
+
+    if (lobby.n == 0) {
+        mvprintw(y + 2, left, "(no open games)");
+        refresh();
+        return;
+    }
+
+    int max_show = 12;
+    int start = 0;
+    if (lobby.sel >= max_show) start = lobby.sel - (max_show - 1);
+    if (start < 0) start = 0;
+
+    for (int i = 0; i < max_show; i++) {
+        int idx = start + i;
+        if (idx >= lobby.n) break;
+
+        LobbyGame *g = &lobby.g[idx];
+        const char *st = (g->st == LOBBY_RUNNING) ? "RUNNING" : "OPEN";
+
+        char row[128];
+        snprintf(row, sizeof(row), "#%d  size=%d  P=%d  %s", g->id, g->size, g->players, st);
+
+        if (idx == lobby.sel) attron(COLOR_PAIR(3) | A_BOLD);
+        mvprintw(y + i, left, "%s", row);
+        if (idx == lobby.sel) attroff(COLOR_PAIR(3) | A_BOLD);
+    }
 
     refresh();
 }
@@ -266,6 +400,10 @@ int main(void) {
     init_ui();
 
     bool running = true;
+    lobby_init(&lobby);
+    net_ready = 0;
+    syncing = 0;
+
     while (running) {
         if (screen == SCREEN_MAIN) {
             draw_main_menu(sel_main);
@@ -295,7 +433,7 @@ int main(void) {
             if (nav == -1) sel_settings = (sel_settings + 5) % 6;
             else if (nav == +1) sel_settings = (sel_settings + 1) % 6;
             else if (ch == ' ') {
-                // toggle
+                // these arent working :)
                 if (sel_settings == 0) st.mouse_support = !st.mouse_support;
                 else if (sel_settings == 1) st.colours = !st.colours;
                 else if (sel_settings >= 2 && sel_settings <= 4) st.theme = sel_settings - 2;
@@ -307,24 +445,36 @@ int main(void) {
             }
         }
         else if (screen == SCREEN_PLAY) {
-            draw_play_screen(sel_play);
+            if (!ensure_connected()) {}
+
+            timeout(0); 
+            pump_network();
+            draw_play_lobby();
+
             int ch = getch();
+            if (ch == ERR) continue;
+
             int nav = read_nav_key(ch);
 
             if (nav == 27) {
                 screen = SCREEN_MAIN;
+                timeout(-1);
                 continue;
             }
 
-            if (nav == -1) sel_play = (sel_play + 2) % 3;
-            else if (nav == +1) sel_play = (sel_play + 1) % 3;
-            else if (nav == 10) {
-                // todo (i need to make lobbies here i think)
-                attron(COLOR_PAIR(4) | A_BOLD);
-                center_print(LINES - 4, "OK (placeholder) - networking will be wired next.");
-                attroff(COLOR_PAIR(4) | A_BOLD);
-                refresh();
-                napms(500);
+            if (nav == -1 && lobby.n > 0) {
+                if (lobby.sel > 0) lobby.sel--;
+            } else if (nav == +1 && lobby.n > 0) {
+                if (lobby.sel < lobby.n - 1) lobby.sel++;
+            } else if (nav == 10 && lobby.n > 0) {
+                char cmd[64]; 
+                snprintf(cmd, sizeof(cmd), "JOIN %d", lobby.g[lobby.sel].id); 
+                net_send_line(&net, cmd);
+            } else if (ch == 'r' || ch == 'R') {
+                net_send_line(&net, "GAMES");
+            } else if (ch == 'h' || ch == 'H') {
+                // for test its 9x9 for now
+                net_send_line(&net, "HOST 9");
             }
         }
     }
