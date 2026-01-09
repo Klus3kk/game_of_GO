@@ -6,7 +6,7 @@
 #include <ncurses.h>
 #include <ctype.h>
 #include <time.h>
-
+#include <locale.h>
 
 typedef enum {
     SCREEN_MAIN = 0,
@@ -48,9 +48,14 @@ static int ui_enabled_colours = 1;
 static time_t last_tick = 0;
 static int black_secs = 10*60;
 static int white_secs = 10*60;
+static unsigned char prev_board[BOARD_MAX_SIZE * BOARD_MAX_SIZE];
+static int prev_board_valid = 0;
+static int score_b = 0; // captures by BLACK
+static int score_w = 0; // captures by WHITE
 
 
 static void init_ui(void) {
+    setlocale(LC_ALL, "");
     initscr();
     cbreak();
     noecho();
@@ -80,6 +85,8 @@ static void client_clear_board(int size) {
     for (int i = 0; i < n; i++) g_board[i] = 0;
     g_to_move = 0;
     cur_x = cur_y = 0;
+    prev_board_valid = 0;
+    score_b = score_w = 0;
 }
 
 static int read_nav_key(int ch) {
@@ -410,29 +417,50 @@ static void parse_server_line(const char *line, Screen *screen) {
     if (sscanf(line, "BOARD %d %15s", &bid, tm) == 2) {
         if (bid != my_game_id) return;
 
-        g_to_move = (strcmp(tm, "BLACK") == 0) ? 0 : 1;
+        int next_to_move = (strcmp(tm, "BLACK") == 0) ? 0 : 1;
 
-        // znajdź start stringa z komórkami: po 3. spacji
         const char *p = strchr(line, ' ');
         if (!p) return;
         p = strchr(p + 1, ' ');
         if (!p) return;
         p = strchr(p + 1, ' ');
         if (!p) return;
-        p++; // teraz p wskazuje na pierwszy znak planszy
+        p++;
 
         int n = my_game_size * my_game_size;
+
+        unsigned char newb[BOARD_MAX_SIZE * BOARD_MAX_SIZE];
         for (int i = 0; i < n; i++) {
             char c = p[i];
-            if (c == '.') g_board[i] = 0;
-            else if (c == 'B') g_board[i] = 1;
-            else if (c == 'W') g_board[i] = 2;
-            else break;
+            if (c == '.') newb[i] = 0;
+            else if (c == 'B') newb[i] = 1;
+            else if (c == 'W') newb[i] = 2;
+            else { n = i; break; }
         }
+
+        if (prev_board_valid) {
+            int removed_black = 0;
+            int removed_white = 0;
+            for (int i = 0; i < n; i++) {
+                if (prev_board[i] == 1 && newb[i] == 0) removed_black++;
+                if (prev_board[i] == 2 && newb[i] == 0) removed_white++;
+            }
+
+            // kto zrobił ostatni ruch?
+            int last_player = 1 - next_to_move; // 0=BLACK,1=WHITE
+
+            if (last_player == 0) score_b += removed_white;  // BLACK zbił WHITE
+            else                 score_w += removed_black;  // WHITE zbił BLACK
+        }
+
+        // commit
+        memcpy(g_board, newb, n);
+        memcpy(prev_board, newb, n);
+        prev_board_valid = 1;
+
+        g_to_move = next_to_move;
         return;
     }
-
-
 }
 
 static void pump_network(Screen *screen) {
@@ -615,29 +643,6 @@ static void draw_ascii_box(int y, int x, int h, int w) {
     addch('/');
 }
 
-static void draw_top_bar(void) {
-    int bm = black_secs / 60, bs = black_secs % 60;
-    int wm = white_secs / 60, ws = white_secs % 60;
-
-    attron(COLOR_PAIR(6));
-    mvhline(0, 0, ' ', COLS);
-    mvprintw(0, 1,
-        "Game #%d  You=%s  ToMove=%s   Time B %02d:%02d | W %02d:%02d",
-        my_game_id, my_color,
-        (g_to_move==0?"BLACK":"WHITE"),
-        bm, bs, wm, ws
-    );
-    attroff(COLOR_PAIR(6));
-}
-
-static void draw_bottom_bar(void) {
-    int y = LINES-1;
-    attron(COLOR_PAIR(6));
-    mvhline(y, 0, ' ', COLS);
-    mvprintw(y, 1, "Mouse: click=move  Enter=place  P=pass  Q/ESC=exit");
-    attroff(COLOR_PAIR(6));
-}
-
 static void apply_theme(int theme) {
     if (!has_colors()) return;
     start_color();
@@ -661,60 +666,139 @@ static void apply_theme(int theme) {
     }
 }
 
+static void draw_board_grid(int top, int left, int size) {
+    const int cell_w = 3;     // "   "
+    // board geometry:
+    // width  = 1 + size*(cell_w) + size*(1 vertical) = 1 + size*(cell_w+1)
+    // height = 1 + size*(1 content) + (size-1)*(1 separator) = 2*size
+    // plus bottom border -> 2*size + 1
+    const int board_h = 2*size + 1;
+    const int board_w = 1 + size*(cell_w + 1);
+
+    const char *TL="┌", *TR="┐", *BL="└", *BR="┘";
+    const char *HZ="─", *VT="│";
+    const char *TJ="┬", *BJ="┴", *LJ="├", *RJ="┤", *XJ="┼";
+
+    // top border
+    mvaddstr(top, left, TL);
+    for (int x = 0; x < size; x++) {
+        for (int k = 0; k < cell_w; k++) addstr(HZ);
+        addstr(x == size-1 ? TR : TJ);
+    }
+
+    // rows
+    for (int y = 0; y < size; y++) {
+        int ry = top + 1 + y*2;
+
+        // content line
+        mvaddstr(ry, left, VT);
+        for (int x = 0; x < size; x++) {
+            int idx = y*size + x;
+
+            // cell interior x origin (first char inside cell)
+            int cx = left + 1 + x*(cell_w+1);
+
+            // background/cursor highlight for whole cell
+            if (x == cur_x && y == cur_y) attron(COLOR_PAIR(3) | A_BOLD);
+
+            // cell fill (spaces)
+            mvaddch(ry, cx + 0, ' ');
+            mvaddch(ry, cx + 1, ' ');
+            mvaddch(ry, cx + 2, ' ');
+
+            // stone in middle
+            if (g_board[idx] == 1) {
+                // B
+                attron(COLOR_PAIR(4) | A_BOLD);
+                mvaddch(ry, cx + 1, 'B');
+                attroff(COLOR_PAIR(4) | A_BOLD);
+            } else if (g_board[idx] == 2) {
+                // W
+                attron(COLOR_PAIR(2) | A_BOLD);
+                mvaddch(ry, cx + 1, 'W');
+                attroff(COLOR_PAIR(2) | A_BOLD);
+            }
+
+            if (x == cur_x && y == cur_y) attroff(COLOR_PAIR(3) | A_BOLD);
+
+            // right separator
+            mvaddstr(ry, cx + cell_w, VT);
+        }
+
+        // separator line
+        if (y != size-1) {
+            int sy = ry + 1;
+            mvaddstr(sy, left, LJ);
+            for (int x = 0; x < size; x++) {
+                for (int k = 0; k < cell_w; k++) addstr(HZ);
+                addstr(x == size-1 ? RJ : XJ);
+            }
+        }
+    }
+
+    // bottom border
+    int by = top + board_h - 1;
+    mvaddstr(by, left, BL);
+    for (int x = 0; x < size; x++) {
+        for (int k = 0; k < cell_w; k++) addstr(HZ);
+        addstr(x == size-1 ? BR : BJ);
+    }
+
+    // update mouse mapping origins for this grid:
+    // content area starts at (top+1, left+1)
+    game_inner_y0 = top + 1;
+    game_inner_x0 = left + 1;
+    game_box_top = top;
+    game_box_left = left;
+}
+
+static void draw_top_bar(void) {
+    int bm = black_secs / 60, bs = black_secs % 60;
+    int wm = white_secs / 60, ws = white_secs % 60;
+
+    attron(COLOR_PAIR(6));
+    mvhline(0, 0, ' ', COLS);
+
+    // score placeholders (score_b/score_w)
+    mvprintw(0, 1,
+        "Game #%d  You=%s  ToMove=%s   Score B %d - W %d   Time B %02d:%02d | W %02d:%02d",
+        my_game_id, my_color,
+        (g_to_move==0?"BLACK":"WHITE"),
+        score_b, score_w,
+        bm, bs, wm, ws
+    );
+    attroff(COLOR_PAIR(6));
+}
+
+static void draw_bottom_bar(void) {
+    int y = LINES-1;
+    attron(COLOR_PAIR(6));
+    mvhline(y, 0, ' ', COLS);
+    mvprintw(y, 1, "Mouse: click=select  double=place  Arrows/WASD move  Enter=place  P=pass  Q/ESC=exit");
+    attroff(COLOR_PAIR(6));
+}
+
 static void draw_game_screen(void) {
     clear();
-
     draw_top_bar();
     draw_bottom_bar();
 
-    int box_h = my_game_size + 2;
-    int box_w = my_game_size*2 + 2;
+    const int cell_w = 3;
+    const int board_h = 2*my_game_size + 1;
+    const int board_w = 1 + my_game_size*(cell_w + 1);
 
-    int top = (LINES - box_h) / 2;
-    int left = (COLS - box_w) / 2;
-    if (top < 1) top = 1;                 // zostaw miejsce na top bar
+    int top = (LINES - board_h) / 2;
+    int left = (COLS - board_w) / 2;
+
+    // keep inside screen with top+bottom bars
+    if (top < 1) top = 1;
     if (left < 0) left = 0;
-    if (top + box_h >= LINES-1) top = 1;  // zostaw bottom bar
+    if (top + board_h >= LINES-1) top = 1;
 
-    // kolory ramki
+    // optional: color frame/lines stronger
     attron(COLOR_PAIR(5) | A_BOLD);
-    draw_ascii_box(top, left, box_h, box_w);
+    draw_board_grid(top, left, my_game_size);
     attroff(COLOR_PAIR(5) | A_BOLD);
-
-    // plansza w środku
-    int inner_y0 = top + 1;
-    int inner_x0 = left + 1;
-
-    game_box_top = top;
-    game_box_left = left;
-    game_inner_y0 = inner_y0;
-    game_inner_x0 = inner_x0;
-
-
-    for (int y = 0; y < my_game_size; y++) {
-        for (int x = 0; x < my_game_size; x++) {
-            int idx = y*my_game_size + x;
-            char c = '.';
-            if (g_board[idx] == 1) c = 'B';
-            else if (g_board[idx] == 2) c = 'W';
-
-            int px = inner_x0 + x*2;
-            int py = inner_y0 + y;
-
-            // highlight kursora
-            if (x == cur_x && y == cur_y) attron(COLOR_PAIR(3) | A_BOLD);
-
-            // kolory kamieni (opcjonalnie)
-            if (c=='B') attron(COLOR_PAIR(4) | A_BOLD); // np green jako placeholder
-            if (c=='W') attron(COLOR_PAIR(2) | A_BOLD);
-
-            mvaddch(py, px, c);
-
-            if (c=='B') attroff(COLOR_PAIR(4) | A_BOLD);
-            if (c=='W') attroff(COLOR_PAIR(2) | A_BOLD);
-            if (x == cur_x && y == cur_y) attroff(COLOR_PAIR(3) | A_BOLD);
-        }
-    }
 
     refresh();
 }
@@ -919,10 +1003,14 @@ int main() {
                         int ry = ev.y - game_inner_y0;
                         int rx = ev.x - game_inner_x0;
 
-                        if (ry >= 0 && ry < my_game_size && rx >= 0) {
-                            int x = rx / 2;
-                            int y = ry;
-                            if (x >= 0 && x < my_game_size) {
+                        // content lines are even (0,2,4...) because separators are odd
+                        if (ry >= 0 && rx >= 0 && (ry % 2 == 0)) {
+                            int y = ry / 2;
+
+                            // each cell is (cell_w=3) + 1 separator
+                            int x = rx / 4;
+
+                            if (x >= 0 && x < my_game_size && y >= 0 && y < my_game_size) {
                                 cur_x = x;
                                 cur_y = y;
 
@@ -937,6 +1025,7 @@ int main() {
                 }
                 continue;
             }
+
 
             int nav = read_nav_key(ch);
 
