@@ -7,11 +7,15 @@
 #include <ctype.h>
 #include <time.h>
 
+
 typedef enum {
     SCREEN_MAIN = 0,
     SCREEN_SETTINGS = 1,
-    SCREEN_PLAY = 2
+    SCREEN_PLAY = 2,
+    SCREEN_WAIT = 3,
+    SCREEN_GAME = 4
 } Screen;
+
 
 typedef struct {
     bool mouse_support;
@@ -20,10 +24,31 @@ typedef struct {
     char nickname[32];
 } Settings;
 
+#define BOARD_MAX_SIZE 19
+static unsigned char g_board[BOARD_MAX_SIZE * BOARD_MAX_SIZE]; // 0 empty, 1 B, 2 W
+static int g_to_move = 0; // 0 black, 1 white
+static int cur_x = 0, cur_y = 0;
 static Net net;
 static Lobby lobby;
+static int my_hosting = 0;
+static int my_game_id = -1;
+static int my_game_size = 0;
+static char my_color[16] = "";
+static int join_pending_size = 0;
 static int net_ready = 0; // 1 if connected
 static int syncing = 0; // 1 for being berween GAMES_BEGIN and GAMES_END
+static int lobby_list_y0 = 0;
+static int lobby_list_x0 = 0;
+static int lobby_list_visible = 0;
+static int lobby_list_start = 0;
+static int main_menu_y0 = 0;
+static int game_box_top=0, game_box_left=0;
+static int game_inner_y0=0, game_inner_x0=0;
+static int ui_enabled_colours = 1;
+static time_t last_tick = 0;
+static int black_secs = 10*60;
+static int white_secs = 10*60;
+
 
 static void init_ui(void) {
     initscr();
@@ -42,10 +67,19 @@ static void init_ui(void) {
         init_pair(5, COLOR_MAGENTA,-1);  // section
         init_pair(6, COLOR_YELLOW, -1);  // hints
     }
+    mousemask(ALL_MOUSE_EVENTS | REPORT_MOUSE_POSITION, NULL);
+    mouseinterval(0);
 }
 
 static void shutdown_ui(void) {
     endwin();
+}
+
+static void client_clear_board(int size) {
+    int n = size * size;
+    for (int i = 0; i < n; i++) g_board[i] = 0;
+    g_to_move = 0;
+    cur_x = cur_y = 0;
 }
 
 static int read_nav_key(int ch) {
@@ -99,6 +133,33 @@ static void center_print(int y, const char *s) {
     mvprintw(y, (x < 0 ? 0 : x), "%s", s);
 }
 
+static void draw_wait_screen(void) {
+    clear();
+    int base_y = 2;
+    draw_logo(base_y);
+
+    int y = base_y + 16;
+
+    attron(COLOR_PAIR(5) | A_BOLD);
+    center_print(y, "WAITING FOR OPPONENT");
+    attroff(COLOR_PAIR(5) | A_BOLD);
+    y += 2;
+
+    char info[128];
+    snprintf(info, sizeof(info), "Game #%d  size=%d  you=%s", my_game_id, my_game_size, my_color[0]?my_color:"?");
+    attron(COLOR_PAIR(2));
+    center_print(y, info);
+    attroff(COLOR_PAIR(2));
+    y += 2;
+
+    attron(COLOR_PAIR(6));
+    center_print(y, "C=CANCEL   R=REFRESH   Q/ESC=BACK");
+    attroff(COLOR_PAIR(6));
+
+    refresh();
+}
+
+
 static void draw_main_menu(int selected) {
     clear();
     int base_y = 2;
@@ -106,6 +167,7 @@ static void draw_main_menu(int selected) {
     draw_logo(base_y);
     int menu_y = base_y + 16;
 
+    main_menu_y0 = menu_y;
     attron(COLOR_PAIR(6));
     center_print(menu_y - 2, "Use up arrow/down arrow or W/S, Enter to select, Q/ESC to quit");
     attroff(COLOR_PAIR(6));
@@ -211,7 +273,7 @@ static void edit_nickname(Settings *st) {
     curs_set(1);
 
     char buf[32] = {0};
-    
+
     // ncurses input
     mvgetnstr(y, left + 31, buf, 31);
 
@@ -273,7 +335,10 @@ static int ensure_connected(void) {
     return 1;
 }
 
-static void parse_server_line(const char *line) {
+static void parse_server_line(const char *line, Screen *screen) {
+    int gid=0;
+    char col[16];
+
     if (strcmp(line, "GAMES_BEGIN") == 0) {
         lobby_clear(&lobby);
         syncing = 1;
@@ -305,9 +370,72 @@ static void parse_server_line(const char *line) {
         lobby_remove(&lobby, id);
         return;
     }
+
+    if (sscanf(line, "HOSTED %d %15s", &gid, col) == 2) {
+        my_hosting = 1;
+        my_game_id = gid;
+        strncpy(my_color, col, sizeof(my_color)-1);
+        my_color[sizeof(my_color)-1] = '\0';
+        // my_game_size ustawiasz w miejscu gdzie wysyłasz HOST (poniżej)
+        return;
+    }
+
+    int id2, size2;
+    if (sscanf(line, "START %d %d %15s", &id2, &size2, col) == 3) {
+        my_game_id = id2;
+        my_game_size = size2;
+        strncpy(my_color, col, sizeof(my_color)-1);
+        my_color[sizeof(my_color)-1] = '\0';
+
+        my_hosting = 0;
+        client_clear_board(size2);
+
+        *screen = SCREEN_GAME;
+        return;
+    }
+
+
+
+    if (strcmp(line, "OK CANCELLED") == 0) {
+        my_hosting = 0;
+        my_game_id = -1;
+        my_game_size = 0;
+        my_color[0] = '\0';
+        return;
+    }
+
+    int bid;
+    char tm[16];
+
+    if (sscanf(line, "BOARD %d %15s", &bid, tm) == 2) {
+        if (bid != my_game_id) return;
+
+        g_to_move = (strcmp(tm, "BLACK") == 0) ? 0 : 1;
+
+        // znajdź start stringa z komórkami: po 3. spacji
+        const char *p = strchr(line, ' ');
+        if (!p) return;
+        p = strchr(p + 1, ' ');
+        if (!p) return;
+        p = strchr(p + 1, ' ');
+        if (!p) return;
+        p++; // teraz p wskazuje na pierwszy znak planszy
+
+        int n = my_game_size * my_game_size;
+        for (int i = 0; i < n; i++) {
+            char c = p[i];
+            if (c == '.') g_board[i] = 0;
+            else if (c == 'B') g_board[i] = 1;
+            else if (c == 'W') g_board[i] = 2;
+            else break;
+        }
+        return;
+    }
+
+
 }
 
-static void pump_network(void) {
+static void pump_network(Screen *screen) {
     if (!net_ready) return;
 
     fd_set rfds;
@@ -331,7 +459,7 @@ static void pump_network(void) {
 
         char line[1024];
         while (net_next_line(&net, line, sizeof(line))) {
-            parse_server_line(line);
+            parse_server_line(line, screen);
         }
     }
 }
@@ -372,6 +500,12 @@ static void draw_play_lobby(void) {
 
     int max_show = 12;
     int start = 0;
+
+    lobby_list_y0 = y;
+    lobby_list_x0 = left;
+    lobby_list_visible = max_show;
+    lobby_list_start = start;
+
     if (lobby.sel >= max_show) start = lobby.sel - (max_show - 1);
     if (start < 0) start = 0;
 
@@ -465,8 +599,128 @@ static int host_popup(int *out_size, char *out_pref) {
     }
 }
 
+static void draw_ascii_box(int y, int x, int h, int w) {
+    // h,w >= 2
+    mvaddch(y, x, '/');
+    for (int i = 1; i < w-1; i++) addch('_');
+    addch('\\');
 
-int main(void) {
+    for (int r = 1; r < h-1; r++) {
+        mvaddch(y+r, x, '|');
+        mvaddch(y+r, x+w-1, '|');
+    }
+
+    mvaddch(y+h-1, x, '\\');
+    for (int i = 1; i < w-1; i++) addch('_');
+    addch('/');
+}
+
+static void draw_top_bar(void) {
+    int bm = black_secs / 60, bs = black_secs % 60;
+    int wm = white_secs / 60, ws = white_secs % 60;
+
+    attron(COLOR_PAIR(6));
+    mvhline(0, 0, ' ', COLS);
+    mvprintw(0, 1,
+        "Game #%d  You=%s  ToMove=%s   Time B %02d:%02d | W %02d:%02d",
+        my_game_id, my_color,
+        (g_to_move==0?"BLACK":"WHITE"),
+        bm, bs, wm, ws
+    );
+    attroff(COLOR_PAIR(6));
+}
+
+static void draw_bottom_bar(void) {
+    int y = LINES-1;
+    attron(COLOR_PAIR(6));
+    mvhline(y, 0, ' ', COLS);
+    mvprintw(y, 1, "Mouse: click=move  Enter=place  P=pass  Q/ESC=exit");
+    attroff(COLOR_PAIR(6));
+}
+
+static void apply_theme(int theme) {
+    if (!has_colors()) return;
+    start_color();
+    use_default_colors();
+
+    if (theme == 0) {
+        init_pair(1, COLOR_CYAN, -1);
+        init_pair(3, COLOR_BLACK, COLOR_CYAN);
+        init_pair(5, COLOR_MAGENTA, -1);
+        init_pair(6, COLOR_YELLOW, -1);
+    } else if (theme == 1) {
+        init_pair(1, COLOR_GREEN, -1);
+        init_pair(3, COLOR_BLACK, COLOR_GREEN);
+        init_pair(5, COLOR_CYAN, -1);
+        init_pair(6, COLOR_WHITE, -1);
+    } else {
+        init_pair(1, COLOR_WHITE, -1);
+        init_pair(3, COLOR_BLACK, COLOR_WHITE);
+        init_pair(5, COLOR_YELLOW, -1);
+        init_pair(6, COLOR_CYAN, -1);
+    }
+}
+
+static void draw_game_screen(void) {
+    clear();
+
+    draw_top_bar();
+    draw_bottom_bar();
+
+    int box_h = my_game_size + 2;
+    int box_w = my_game_size*2 + 2;
+
+    int top = (LINES - box_h) / 2;
+    int left = (COLS - box_w) / 2;
+    if (top < 1) top = 1;                 // zostaw miejsce na top bar
+    if (left < 0) left = 0;
+    if (top + box_h >= LINES-1) top = 1;  // zostaw bottom bar
+
+    // kolory ramki
+    attron(COLOR_PAIR(5) | A_BOLD);
+    draw_ascii_box(top, left, box_h, box_w);
+    attroff(COLOR_PAIR(5) | A_BOLD);
+
+    // plansza w środku
+    int inner_y0 = top + 1;
+    int inner_x0 = left + 1;
+
+    game_box_top = top;
+    game_box_left = left;
+    game_inner_y0 = inner_y0;
+    game_inner_x0 = inner_x0;
+
+
+    for (int y = 0; y < my_game_size; y++) {
+        for (int x = 0; x < my_game_size; x++) {
+            int idx = y*my_game_size + x;
+            char c = '.';
+            if (g_board[idx] == 1) c = 'B';
+            else if (g_board[idx] == 2) c = 'W';
+
+            int px = inner_x0 + x*2;
+            int py = inner_y0 + y;
+
+            // highlight kursora
+            if (x == cur_x && y == cur_y) attron(COLOR_PAIR(3) | A_BOLD);
+
+            // kolory kamieni (opcjonalnie)
+            if (c=='B') attron(COLOR_PAIR(4) | A_BOLD); // np green jako placeholder
+            if (c=='W') attron(COLOR_PAIR(2) | A_BOLD);
+
+            mvaddch(py, px, c);
+
+            if (c=='B') attroff(COLOR_PAIR(4) | A_BOLD);
+            if (c=='W') attroff(COLOR_PAIR(2) | A_BOLD);
+            if (x == cur_x && y == cur_y) attroff(COLOR_PAIR(3) | A_BOLD);
+        }
+    }
+
+    refresh();
+}
+
+
+int main() {
     Settings st = {.mouse_support = true, .colours = true, .theme = 0, .nickname = "u1"};
     Screen screen = SCREEN_MAIN;
     int sel_main = 0;
@@ -475,6 +729,7 @@ int main(void) {
 
     init_ui();
 
+    apply_theme(st.theme);
     bool running = true;
     lobby_init(&lobby);
     net_ready = 0;
@@ -484,6 +739,33 @@ int main(void) {
         if (screen == SCREEN_MAIN) {
             draw_main_menu(sel_main);
             int ch = getch();
+
+            if (ch == KEY_MOUSE && st.mouse_support) {
+                MEVENT ev;
+                if (getmouse(&ev) == OK) {
+                    if (ev.bstate & BUTTON1_CLICKED) {
+                        // elementy są na: main_menu_y0 + i*2
+                        for (int i = 0; i < 3; i++) {
+                            if (ev.y == main_menu_y0 + i*2) {
+                                sel_main = i;
+                                break;
+                            }
+                        }
+                    } else if (ev.bstate & BUTTON1_DOUBLE_CLICKED) {
+                        for (int i = 0; i < 3; i++) {
+                            if (ev.y == main_menu_y0 + i*2) {
+                                sel_main = i;
+                                if (sel_main == 0) screen = SCREEN_PLAY;
+                                else if (sel_main == 1) screen = SCREEN_SETTINGS;
+                                else running = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
             int nav = read_nav_key(ch);
 
             if (nav == -1) sel_main = (sel_main + 2) % 3;
@@ -522,10 +804,11 @@ int main(void) {
         }
         else if (screen == SCREEN_PLAY) {
             if (!ensure_connected()) {}
-            static int tick = 0;
+            if (my_hosting) { screen = SCREEN_WAIT; continue; }
 
+            static int tick = 0;
             timeout(200);
-            pump_network();
+            pump_network(&screen);
             tick++;
             if (tick >= 50) {      // 50 * 200ms = 10s
                 net_send_line(&net, "GAMES");
@@ -536,6 +819,28 @@ int main(void) {
 
             int ch = getch();
             if (ch == ERR) continue;
+
+            if (ch == KEY_MOUSE && st.mouse_support) {
+                MEVENT ev;
+                if (getmouse(&ev) == OK) {
+                    if (ev.bstate & (BUTTON1_CLICKED | BUTTON1_DOUBLE_CLICKED)) {
+                        int row = ev.y - lobby_list_y0;
+                        if (row >= 0 && row < lobby_list_visible) {
+                            int idx = lobby_list_start + row;
+                            if (idx >= 0 && idx < lobby.n) {
+                                lobby.sel = idx;
+
+                                if (ev.bstate & BUTTON1_DOUBLE_CLICKED) {
+                                    char cmd[64];
+                                    snprintf(cmd, sizeof(cmd), "JOIN %d", lobby.g[lobby.sel].id);
+                                    net_send_line(&net, cmd);
+                                }
+                            }
+                        }
+                    }
+                }
+                continue; // po kliknięciu od razu kolejna iteracja
+            }
 
 
             int nav = read_nav_key(ch);
@@ -563,8 +868,96 @@ int main(void) {
                 if (host_popup(&size, &pref)) {
                     char cmd[64];
                     snprintf(cmd, sizeof(cmd), "HOST %d %c", size, pref);
+                    my_game_size = size;
                     net_send_line(&net, cmd);
                 }
+            }
+        } else if (screen == SCREEN_WAIT) {
+            timeout(200);
+            pump_network(&screen);
+            draw_wait_screen();
+
+            int ch = getch();
+            if (ch == ERR) continue;
+
+            if (ch == 'r' || ch == 'R') {
+                net_send_line(&net, "GAMES");
+            } else if (ch == 'c' || ch == 'C') {
+                net_send_line(&net, "CANCEL");
+                // server odeśle OK CANCELLED + EVENT
+            } else {
+                int nav = read_nav_key(ch);
+                if (nav == 27) { // ESC
+                    net_send_line(&net, "CANCEL");
+                    screen = SCREEN_PLAY; // wróci po OK CANCELLED albo od razu
+                }
+            }
+        } else if (screen == SCREEN_GAME) {
+            timeout(200);
+            pump_network(&screen);
+
+            time_t now = time(NULL);
+            if (last_tick == 0) last_tick = now;
+            int dt = (int)(now - last_tick);
+            if (dt > 0) {
+                last_tick = now;
+                if (g_to_move == 0) black_secs -= dt;
+                else white_secs -= dt;
+                if (black_secs < 0) black_secs = 0;
+                if (white_secs < 0) white_secs = 0;
+            }
+
+            draw_game_screen();
+
+            int ch = getch();
+            if (ch == ERR) continue;
+
+            if (ch == KEY_MOUSE && st.mouse_support) {
+                MEVENT ev;
+                if (getmouse(&ev) == OK) {
+                    if (ev.bstate & (BUTTON1_CLICKED | BUTTON1_DOUBLE_CLICKED)) {
+                        int ry = ev.y - game_inner_y0;
+                        int rx = ev.x - game_inner_x0;
+
+                        if (ry >= 0 && ry < my_game_size && rx >= 0) {
+                            int x = rx / 2;
+                            int y = ry;
+                            if (x >= 0 && x < my_game_size) {
+                                cur_x = x;
+                                cur_y = y;
+
+                                if (ev.bstate & BUTTON1_DOUBLE_CLICKED) {
+                                    char cmd[64];
+                                    snprintf(cmd, sizeof(cmd), "MOVE %d %d %d", my_game_id, cur_x, cur_y);
+                                    net_send_line(&net, cmd);
+                                }
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
+            int nav = read_nav_key(ch);
+
+            if (nav == 27 || ch == 'q' || ch == 'Q') {
+                screen = SCREEN_PLAY;
+                timeout(200);
+                continue;
+            }
+
+            if (nav == -1 && cur_y > 0) cur_y--;
+            else if (nav == +1 && cur_y < my_game_size - 1) cur_y++;
+            else if (nav == 100 && cur_x > 0) cur_x--;
+            else if (nav == 101 && cur_x < my_game_size - 1) cur_x++;
+            else if (nav == 10) {
+                char cmd[64];
+                snprintf(cmd, sizeof(cmd), "MOVE %d %d %d", my_game_id, cur_x, cur_y);
+                net_send_line(&net, cmd);
+            } else if (ch == 'p' || ch == 'P') {
+                char cmd[64];
+                snprintf(cmd, sizeof(cmd), "PASS %d", my_game_id);
+                net_send_line(&net, cmd);
             }
         }
     }
