@@ -331,11 +331,20 @@ static void draw_play_screen(int selected) {
     refresh(); // this should work so that it refreshes every 5-10 seconds for example, or, even better, if the user presses a key like 'r' for refresh
 }
 
+static const char* nick_of_fd(Client clients[], int fd) {
+    for (int i = 0; i < MAX_CLIENTS; i++) if (clients[i].fd == fd) return clients[i].nick;
+    return "?";
+}
+
 static int ensure_connected(void) {
     if (net_ready) return 1;
 
     if (net_connect(&net, "127.0.0.1", 1984) < 0) return 0;  // failure
     net_ready = 1;
+
+    char cmd[64];
+    snprintf(cmd, sizeof(cmd), "NICK %s", st->nickname[0] ? st->nickname : "player");
+    net_send_line(&net, cmd);
 
     net_send_line(&net, "SUB");
     net_send_line(&net, "GAMES");

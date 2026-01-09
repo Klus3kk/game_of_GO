@@ -1,9 +1,17 @@
+// server.c
 // Multi-client TCP server (GNU/Linux, BSD sockets)
 // Commands:
 //   NICK <name>   -> sets nickname
-//   LIST          -> list connected clients
+//   SUB           -> subscribe to lobby broadcasts
+//   GAMES         -> list games
+//   HOST <size> <B|W|R>
+//   JOIN <id>
+//   MOVE <id> <x> <y>
+//   PASS <id>
+//   CANCEL
 //   QUIT          -> disconnect
-// Run:   ./server 9000 
+// Run:   ./server 9000
+// gcc server.c server_game.c server_proto.c -o server
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,69 +20,27 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/select.h>
-#include <errno.h> 
+#include <errno.h>
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <signal.h> // i need to add this so that when the client disconnects it doesn't crash the server
 #include <time.h>
+#include "server_game.h"
+#include "server_proto.h"
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
 
-#define FD_SIZE 1024
-#define MAX_CLIENTS 50
-#define BUF_SIZE 4096
-#define NICK_SIZE 32
-#define MAX_GAMES 25
-#define BOARD_MAX_SIZE 19
-
-typedef enum { GAME_OPEN, GAME_RUNNING } GameStatus;
-
-typedef struct {
-    int id;
-    int size;         // board size
-    int host_fd;      // who created the game
-    int guest_fd;     // -1 if none
-    int host_color;   // 0 = black,1 = white
-    GameStatus status;
-    unsigned char board[BOARD_MAX_SIZE * BOARD_MAX_SIZE]; // 0 empty, 1 black, 2 white
-    int to_move; // 0 black, 1 white
-    unsigned char prev_board[BOARD_MAX_SIZE * BOARD_MAX_SIZE];
-} Game;
-
-static Game games[MAX_GAMES];
-static int game_count = 0;
-static int next_game_id = 1;
-
-typedef struct {
-    int fd;                  // -1 if unused
-    char nick[NICK_SIZE];    // nickname
-    char buf[BUF_SIZE];      // receive buffer
-    size_t len;              // length of data in buffer
-    struct sockaddr_in addr; // client address
-    bool subscribed;         
-} Client;
-
-static void game_clear_board(Game *g) {
-    int n = g->size * g->size;
-    for (int i = 0; i < n; i++) {
-        g->board[i] = 0;
-        g->prev_board[i] = 0;
+static const char* nick_of_fd(Client clients[], int fd) {
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].fd == fd) return clients[i].nick;
     }
-    g->to_move = 0; // black to move
-}
-
-
-static int game_idx(Game *g, int x, int y) {
-    return y * g->size + x;
-}
-
-static int fd_color_in_game(const Game *g, int fd) {
-    // return 0 black / 1 white / -1 not in game
-    if (g->host_fd == fd) return g->host_color;
-    if (g->guest_fd == fd) return (g->host_color == 0 ? 1 : 0);
-    return -1;
+    return "?";
 }
 
 // send all data in s of length n
-static ssize_t send_str(int fd, const char *s) {
+// NOTE: not static, because server_proto.c uses it too
+ssize_t send_str(int fd, const char *s) {
     size_t n = strlen(s);
     while (n > 0) {
         ssize_t w = send(fd, s, n, 0);
@@ -95,37 +61,13 @@ static void send_fmt(int fd, const char *prefix, const char *body) {
     if (k > 0) (void)send_str(fd, out);
 }
 
-// Init client 
+// Init client
 static void client_init(Client *c) {
     c->fd = -1;
     c->nick[0] = '\0';
     c->len = 0;
     c->subscribed = false;
     memset(&c->addr, 0, sizeof(c->addr));
-}
-
-static void send_board(Game *g) {
-    char msg[BUF_SIZE];
-    int n = g->size * g->size;
-
-    const char *tm = (g->to_move == 0) ? "BLACK" : "WHITE";
-
-    // "BOARD id to_move <cells>\n"
-    int k = snprintf(msg, sizeof(msg), "BOARD %d %s ", g->id, tm);
-    if (k < 0) return;
-
-    // append cells
-    for (int i = 0; i < n && k + 2 < (int)sizeof(msg); i++) {
-        char c = '.';
-        if (g->board[i] == 1) c = 'B';
-        else if (g->board[i] == 2) c = 'W';
-        msg[k++] = c;
-    }
-    if (k + 1 < (int)sizeof(msg)) msg[k++] = '\n';
-    msg[k] = '\0';
-
-    send_str(g->host_fd, msg);
-    if (g->guest_fd != -1) send_str(g->guest_fd, msg);
 }
 
 // Add new client, return index or -1 if full
@@ -167,10 +109,11 @@ static void client_close(Client *c) {
     client_init(c);
 }
 
-static void broadcast_subscribed(Client clients[], const char *msg) {
+void broadcast_subscribed(Client clients[], const char *msg) {
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (clients[i].fd != -1 && clients[i].subscribed) {
             if (send_str(clients[i].fd, msg) < 0) {
+                remove_games_of_client(clients, clients[i].fd, "DISCONNECT");
                 client_close(&clients[i]);
             }
         }
@@ -183,32 +126,6 @@ static void fatal_error(const char *msg) {
     exit(1);
 }
 
-static Game *find_game_by_id(int id) {
-    for (int i = 0; i < game_count; i++) {
-        if (games[i].id == id)
-            return &games[i];
-    }
-    return NULL;
-}
-
-static void remove_games_of_client(Client clients[], int fd) {
-    for (int i = 0; i < game_count; ) {
-        if (games[i].host_fd == fd || games[i].guest_fd == fd) {
-            int removed_id = games[i].id;
-
-            games[i] = games[game_count - 1];
-            game_count--;
-
-            char ev[64];
-            snprintf(ev, sizeof(ev), "EVENT GAME_REMOVED %d\n", removed_id);
-            broadcast_subscribed(clients, ev);
-            continue;
-        } else {
-            i++;
-        }
-    }
-}
-
 // Remove trailing \n and \r
 static void rstrip(char *s) {
     size_t n = strlen(s);
@@ -217,94 +134,6 @@ static void rstrip(char *s) {
         n--;
     }
 }
-
-static int host_has_game(int fd) {
-    for (int i = 0; i < game_count; i++) {
-        if (games[i].host_fd == fd) return 1;
-    }
-    return 0;
-}
-
-static void copy_board(Game *g, unsigned char *dst, const unsigned char *src) {
-    int n = g->size * g->size;
-    for (int i = 0; i < n; i++) dst[i] = src[i];
-}
-
-static int boards_equal(Game *g, const unsigned char *a, const unsigned char *b) {
-    int n = g->size * g->size;
-    for (int i = 0; i < n; i++) if (a[i] != b[i]) return 0;
-    return 1;
-}
-
-static int in_bounds(Game *g, int x, int y) {
-    return x >= 0 && y >= 0 && x < g->size && y < g->size;
-}
-
-// BFS group + liberties
-static int collect_group(Game *g, int sx, int sy, unsigned char color,
-                         int *stones, int max_stones, int *out_liberties) {
-    int n = g->size * g->size;
-    unsigned char seen[BOARD_MAX_SIZE * BOARD_MAX_SIZE];
-    for (int i = 0; i < n; i++) seen[i] = 0;
-
-    int qx[BOARD_MAX_SIZE * BOARD_MAX_SIZE];
-    int qy[BOARD_MAX_SIZE * BOARD_MAX_SIZE];
-    int qh = 0, qt = 0;
-
-    int start = game_idx(g, sx, sy);
-    if (g->board[start] != color) { *out_liberties = 0; return 0; }
-
-    qx[qt] = sx; qy[qt] = sy; qt++;
-    seen[start] = 1;
-
-    int count = 0;
-    int liberties = 0;
-
-    while (qh < qt) {
-        int x = qx[qh], y = qy[qh]; qh++;
-        int idx = game_idx(g, x, y);
-
-        if (count < max_stones) stones[count] = idx;
-        count++;
-
-        const int dx[4] = {1,-1,0,0};
-        const int dy[4] = {0,0,1,-1};
-
-        for (int k = 0; k < 4; k++) {
-            int nx = x + dx[k], ny = y + dy[k];
-            if (!in_bounds(g, nx, ny)) continue;
-            int nidx = game_idx(g, nx, ny);
-
-            if (g->board[nidx] == 0) {
-                // count each liberty once
-                // mark empty as seen using special trick: 3 means "empty counted"
-                if (seen[nidx] != 3) { seen[nidx] = 3; liberties++; }
-            } else if (g->board[nidx] == color) {
-                if (!seen[nidx]) {
-                    seen[nidx] = 1;
-                    qx[qt] = nx; qy[qt] = ny; qt++;
-                }
-            }
-        }
-    }
-
-    *out_liberties = liberties;
-    return count;
-}
-
-static int remove_group(Game *g, const int *stones, int count) {
-    int removed = 0;
-    int n = g->size * g->size;
-    for (int i = 0; i < count; i++) {
-        int idx = stones[i];
-        if (idx >= 0 && idx < n && g->board[idx] != 0) {
-            g->board[idx] = 0;
-            removed++;
-        }
-    }
-    return removed;
-}
-
 
 // Handle a complete line from client idx
 static void handle_line(Client clients[], int idx, char *line) {
@@ -337,29 +166,13 @@ static void handle_line(Client clients[], int idx, char *line) {
 
     if (strcmp(line, "QUIT") == 0) {
         send_fmt(c->fd, "OK ", "bye");
-        remove_games_of_client(clients, c->fd);
+        remove_games_of_client(clients, c->fd, "QUIT");
         client_close(c);
         return;
     }
 
     if (strcmp(line, "CANCEL") == 0) {
-        // remove ONLY open games hosted by this client
-        int removed = 0;
-        for (int i = 0; i < game_count; ) {
-            if (games[i].host_fd == c->fd && games[i].status == GAME_OPEN) {
-                int removed_id = games[i].id;
-                games[i] = games[game_count - 1];
-                game_count--;
-                removed = 1;
-
-                char ev[64];
-                snprintf(ev, sizeof(ev), "EVENT GAME_REMOVED %d\n", removed_id);
-                broadcast_subscribed(clients, ev);
-                continue;
-            }
-            i++;
-        }
-
+        int removed = cancel_open_games_of_host(clients, c->fd);
         if (removed) send_str(c->fd, "OK CANCELLED\n");
         else send_str(c->fd, "ERR nothing to cancel\n");
         return;
@@ -367,28 +180,10 @@ static void handle_line(Client clients[], int idx, char *line) {
 
 
     if (strcmp(line, "GAMES") == 0) {
-        send_str(c->fd, "GAMES_BEGIN\n");
-
-        for (int i = 0; i < game_count; i++) {
-            char buf[128];
-            const char *status =
-                (games[i].status == GAME_OPEN) ? "OPEN" : "RUNNING";
-
-            int players = (games[i].guest_fd == -1) ? 1 : 2;
-
-            snprintf(buf, sizeof(buf),
-                    "GAME %d %d %d %s\n",
-                    games[i].id,
-                    games[i].size,
-                    players,
-                    status);
-
-            send_str(c->fd, buf);
-        }
-
-        send_str(c->fd, "GAMES_END\n");
+        list_games(clients, c->fd);
         return;
     }
+
 
     if (strncmp(line, "HOST ", 5) == 0) {
         int size = 0;
@@ -407,37 +202,15 @@ static void handle_line(Client clients[], int idx, char *line) {
             return;
         }
 
-        if (game_count >= MAX_GAMES) {
+        int gid = create_game(clients, c->fd, size, pref);
+        if (gid == -1) {
             send_str(c->fd, "ERR server full\n");
             return;
         }
-
-        // one host/one game limit
-        if (host_has_game(c->fd)) {
+        if (gid == -2) {
             send_str(c->fd, "ERR already hosting a game\n");
             return;
         }
-
-        int host_color = 0;
-        if (pref == 'B') host_color = 0;
-        else if (pref == 'W') host_color = 1;
-        else host_color = rand() % 2;
-
-        Game *g = &games[game_count++];
-        g->id = next_game_id++;
-        g->size = size;
-        g->host_fd = c->fd;
-        g->guest_fd = -1;
-        g->status = GAME_OPEN;
-        g->host_color = host_color;
-
-        char buf[64];
-        snprintf(buf, sizeof(buf), "HOSTED %d %s\n", g->id, host_color==0 ? "BLACK" : "WHITE");
-        send_str(c->fd, buf);
-
-        char ev[64];
-        snprintf(ev, sizeof(ev), "EVENT GAME_CREATED %d %d\n", g->id, g->size);
-        broadcast_subscribed(clients, ev);
         return;
     }
 
@@ -464,13 +237,8 @@ static void handle_line(Client clients[], int idx, char *line) {
         g->guest_fd = c->fd;
         g->status = GAME_RUNNING;
 
-        // :) im proud of this part
         const char *hc = (g->host_color == 0) ? "BLACK" : "WHITE";
         const char *gc = (g->host_color == 0) ? "WHITE" : "BLACK";
-
-        char a[32], b[32];
-        snprintf(a, sizeof(a), "JOINED %s\n", hc);
-        snprintf(b, sizeof(b), "JOINED %s\n", gc);
 
         game_clear_board(g);
 
@@ -483,14 +251,21 @@ static void handle_line(Client clients[], int idx, char *line) {
 
         // pierwsza plansza (pusta)
         send_board(g);
+        send_captures(g);
 
+        int black_fd = (g->host_color == 0) ? g->host_fd : g->guest_fd;
+        int white_fd = (g->host_color == 0) ? g->guest_fd : g->host_fd;
 
-
+        char nn[128];
+        snprintf(nn, sizeof(nn), "NICKS %d %s %s\n", g->id,
+                nick_of_fd(clients, black_fd),
+                nick_of_fd(clients, white_fd));
+        send_str(g->host_fd, nn);
+        send_str(g->guest_fd, nn);
 
         char ev[64];
         snprintf(ev, sizeof(ev), "EVENT GAME_STARTED %d\n", g->id);
         broadcast_subscribed(clients, ev);
-
 
         return;
     }
@@ -521,14 +296,11 @@ static void handle_line(Client clients[], int idx, char *line) {
         int idxb = game_idx(g, x, y);
         if (g->board[idxb] != 0) { send_str(c->fd, "ERR occupied\n"); return; }
 
-        // save snapshot for ko (prev_board = current board)
         unsigned char before[BOARD_MAX_SIZE * BOARD_MAX_SIZE];
         copy_board(g, before, g->board);
 
-        // place stone
         g->board[idxb] = (myc == 0 ? 1 : 2);
 
-        // capture opponent groups around
         unsigned char opp = (myc == 0 ? 2 : 1);
         const int dx[4] = {1,-1,0,0};
         const int dy[4] = {0,0,1,-1};
@@ -540,46 +312,43 @@ static void handle_line(Client clients[], int idx, char *line) {
             int nidx = game_idx(g, nx, ny);
             if (g->board[nidx] == opp) {
                 int libs = 0;
-                int cnt = collect_group(g, nx, ny, opp, stones, (int)(BOARD_MAX_SIZE*BOARD_MAX_SIZE), &libs);
+                int cnt = collect_group(g, nx, ny, opp, stones,
+                                        (int)(BOARD_MAX_SIZE*BOARD_MAX_SIZE), &libs);
                 if (cnt > 0 && libs == 0) {
-                    remove_group(g, stones, cnt);
+                    int removed = remove_group(g, stones, cnt);
+                    if (myc == 0) g->cap_black += removed;
+                    else         g->cap_white += removed;
                 }
             }
         }
 
-        // suicide check (my group must have liberty after captures)
         int mylibs = 0;
-        int mycnt = collect_group(g, x, y, (myc == 0 ? 1 : 2), stones, (int)(BOARD_MAX_SIZE*BOARD_MAX_SIZE), &mylibs);
+        int mycnt = collect_group(g, x, y, (myc == 0 ? 1 : 2), stones,
+                                  (int)(BOARD_MAX_SIZE*BOARD_MAX_SIZE), &mylibs);
         if (mycnt > 0 && mylibs == 0) {
-            // revert
             copy_board(g, g->board, before);
             send_str(c->fd, "ERR suicide\n");
             return;
         }
 
-        // simple ko: disallow if resulting board equals prev_board
-        // (prev_board holds previous position after last legal move)
         if (boards_equal(g, g->board, g->prev_board)) {
-            // revert
             copy_board(g, g->board, before);
             send_str(c->fd, "ERR ko\n");
             return;
         }
 
-        // legal: update prev_board to 'before'
         copy_board(g, g->prev_board, before);
 
-        // toggle turn
         g->to_move = (g->to_move == 0 ? 1 : 0);
 
-        // notify both
         char msg[128];
-        snprintf(msg, sizeof(msg), "MOVED %d %d %d %s\n", g->id, x, y, (myc==0?"BLACK":"WHITE"));
+        snprintf(msg, sizeof(msg), "MOVED %d %d %d %s\n",
+                 g->id, x, y, (myc==0?"BLACK":"WHITE"));
         send_str(g->host_fd, msg);
         send_str(g->guest_fd, msg);
 
-        // send whole board snapshot
         send_board(g);
+        send_captures(g);
         return;
     }
 
@@ -598,7 +367,6 @@ static void handle_line(Client clients[], int idx, char *line) {
         if (myc < 0) { send_str(c->fd, "ERR not in that game\n"); return; }
         if (myc != g->to_move) { send_str(c->fd, "ERR not your turn\n"); return; }
 
-        // update ko snapshot: before-position becomes prev_board (board unchanged, but move exists)
         unsigned char before[BOARD_MAX_SIZE * BOARD_MAX_SIZE];
         copy_board(g, before, g->board);
         copy_board(g, g->prev_board, before);
@@ -614,8 +382,6 @@ static void handle_line(Client clients[], int idx, char *line) {
         return;
     }
 
-
-
     send_fmt(c->fd, "ERR ", "unknown command");
 }
 
@@ -623,16 +389,15 @@ static void process_client_data(Client clients[], int idx) {
     Client *c = &clients[idx];
     if (c->fd < 0) return;
 
-    // read into buffer tail
     ssize_t r = recv(c->fd, c->buf + c->len, (size_t)(BUF_SIZE - c->len), 0);
     if (r == 0) {
-        remove_games_of_client(clients, c->fd);
+        remove_games_of_client(clients, c->fd, "DISCONNECT");
         client_close(c);
         return;
     }
     if (r < 0) {
         if (errno == EINTR) return;
-        remove_games_of_client(clients, c->fd);
+        remove_games_of_client(clients, c->fd, "DISCONNECT");
         client_close(c);
         return;
     }
@@ -655,14 +420,12 @@ static void process_client_data(Client clients[], int idx) {
         }
     }
 
-    // compact remaining bytes 
     if (start > 0) {
         size_t remain = c->len - start;
         memmove(c->buf, c->buf + start, remain);
         c->len = remain;
     }
 
-    // if buffer is full without newline -> reset to avoid deadlock
     if (c->len == BUF_SIZE) {
         c->len = 0;
         send_fmt(c->fd, "ERR ", "line too long");
@@ -670,16 +433,15 @@ static void process_client_data(Client clients[], int idx) {
 }
 
 int main(int argc, char **argv) {
-    signal(SIGPIPE, SIG_IGN); // ignore SIGPIPE to prevent crashes on client disconnects
+    signal(SIGPIPE, SIG_IGN);
     srand((unsigned)time(NULL));
 
-    int port = 1984; // default 
+    int port = 1984;
     if (argc >= 2) port = atoi(argv[1]);
     if (port <= 0 || port > 65535) {
         fprintf(stderr, "Usage: %s <port>\n", argv[0]);
         return 1;
     }
-
 
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) fatal_error("socket");
