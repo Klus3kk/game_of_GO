@@ -37,7 +37,7 @@ static void send_all(int fd, const char *data, size_t n) {
 
 int main(int argc, char **argv) {
     const char *host = "127.0.0.1";
-    int port = 9000;
+    int port = 1984;
 
     if (argc >= 2) host = argv[1];
     if (argc >= 3) port = atoi(argv[2]);
@@ -57,7 +57,7 @@ int main(int argc, char **argv) {
     if (connect(sock, (struct sockaddr *)&serv, sizeof(serv)) < 0) fatal_error("connect");
 
     printf("Connected to %s:%d\n", host, port);
-    printf("Type commands (e.g. NICK <nick> \\ GAMES \\ HOST <size> \\ JOIN <id> \\ QUIT)\n");
+    printf("Type commands (e.g. NICK <nick> \\ GAMES \\ HOST <size> \\ JOIN <id> \\ SUB \\ QUIT)\n");
 
 
     while (1) {

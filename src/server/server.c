@@ -3,7 +3,7 @@
 //   NICK <name>   -> sets nickname
 //   LIST          -> list connected clients
 //   QUIT          -> disconnect
-// Run:   ./server 9000
+// Run:   ./server 9000 
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +15,7 @@
 #include <errno.h> 
 #include <netinet/in.h>
 #include <stdbool.h>
+#include <signal.h> // i need to add this so that when the client disconnects it doesn't crash the server
 
 #define FD_SIZE 1024
 #define MAX_CLIENTS 50
@@ -44,27 +45,29 @@ typedef struct {
     char buf[BUF_SIZE];      // receive buffer
     size_t len;              // length of data in buffer
     struct sockaddr_in addr; // client address
+    bool subscribed;         
 } Client;
 
 // send all data in s of length n
-static void send_str(int fd, const char *s) {
+static ssize_t send_str(int fd, const char *s) {
     size_t n = strlen(s);
     while (n > 0) {
         ssize_t w = send(fd, s, n, 0);
         if (w < 0) {
             if (errno == EINTR) continue;
-            break;
+            return -1;
         }
         s += (size_t)w;
         n -= (size_t)w;
     }
+    return 0;
 }
 
 // send formatted message: prefix + body + '\n'
 static void send_fmt(int fd, const char *prefix, const char *body) {
     char out[BUF_SIZE];
     int k = snprintf(out, sizeof(out), "%s%s\n", prefix, body);
-    if (k > 0) send_str(fd, out);
+    if (k > 0) (void)send_str(fd, out);
 }
 
 // Init client 
@@ -72,6 +75,7 @@ static void client_init(Client *c) {
     c->fd = -1;
     c->nick[0] = '\0';
     c->len = 0;
+    c->subscribed = false;
     memset(&c->addr, 0, sizeof(c->addr));
 }
 
@@ -82,11 +86,12 @@ static int add_client(Client clients[], int fd, struct sockaddr_in *peer) {
             clients[i].fd = fd;
             clients[i].len = 0;
             clients[i].addr = *peer;
+            clients[i].subscribed = false;
 
             // default nick: u<fd>
             snprintf(clients[i].nick, sizeof(clients[i].nick), "u%d", fd);
 
-            send_fmt(fd, "WELCOME ", "type: NICK <name> | GAMES | HOST <size> | JOIN <id> | QUIT");
+            // send_fmt(fd, "WELCOME ", "type: NICK <name> \\ SUB | GAMES | HOST <size> | JOIN <id> | QUIT");
             return i;
         }
     }
@@ -114,6 +119,16 @@ static void client_close(Client *c) {
     client_init(c);
 }
 
+static void broadcast_subscribed(Client clients[], const char *msg) {
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].fd != -1 && clients[i].subscribed) {
+            if (send_str(clients[i].fd, msg) < 0) {
+                client_close(&clients[i]);
+            }
+        }
+    }
+}
+
 // Fatal error
 static void fatal_error(const char *msg) {
     perror(msg);
@@ -128,11 +143,17 @@ static Game *find_game_by_id(int id) {
     return NULL;
 }
 
-static void remove_games_of_client(int fd) {
+static void remove_games_of_client(Client clients[], int fd) {
     for (int i = 0; i < game_count; ) {
         if (games[i].host_fd == fd || games[i].guest_fd == fd) {
+            int removed_id = games[i].id;
+
             games[i] = games[game_count - 1];
             game_count--;
+
+            char ev[64];
+            snprintf(ev, sizeof(ev), "EVENT GAME_REMOVED %d\n", removed_id);
+            broadcast_subscribed(clients, ev);
         } else {
             i++;
         }
@@ -179,6 +200,7 @@ static void handle_line(Client clients[], int idx, char *line) {
 
     if (strcmp(line, "QUIT") == 0) {
         send_fmt(c->fd, "OK ", "bye");
+        remove_games_of_client(clients, c->fd);
         client_close(c);
         return;
     }
@@ -230,6 +252,11 @@ static void handle_line(Client clients[], int idx, char *line) {
         char buf[64];
         snprintf(buf, sizeof(buf), "HOSTED %d\n", g->id);
         send_str(c->fd, buf);
+
+        char ev[64];
+        snprintf(ev, sizeof(ev), "EVENT GAME_CREATED %d %d\n", g->id, g->size);
+        broadcast_subscribed(clients, ev);
+
         return;
     }
 
@@ -257,9 +284,20 @@ static void handle_line(Client clients[], int idx, char *line) {
 
         send_str(g->host_fd, "JOINED BLACK\n");
         send_str(g->guest_fd, "JOINED WHITE\n");
+
+        char ev[64];
+        snprintf(ev, sizeof(ev), "EVENT GAME_STARTED %d\n", g->id);
+        broadcast_subscribed(clients, ev);
+
+
         return;
     }
 
+    if (strcmp(line, "SUB") == 0) {
+        c->subscribed = true;
+        send_fmt(c->fd, "OK ", "subscribed to broadcasts");
+        return;
+    }
     send_fmt(c->fd, "ERR ", "unknown command");
 }
 
@@ -270,13 +308,13 @@ static void process_client_data(Client clients[], int idx) {
     // read into buffer tail
     ssize_t r = recv(c->fd, c->buf + c->len, (size_t)(BUF_SIZE - c->len), 0);
     if (r == 0) {
-        remove_games_of_client(c->fd);
+        remove_games_of_client(clients, c->fd);
         client_close(c);
         return;
     }
     if (r < 0) {
         if (errno == EINTR) return;
-        remove_games_of_client(c->fd);
+        remove_games_of_client(clients, c->fd);
         client_close(c);
         return;
     }
@@ -314,7 +352,8 @@ static void process_client_data(Client clients[], int idx) {
 }
 
 int main(int argc, char **argv) {
-    int port = 1984;
+    signal(SIGPIPE, SIG_IGN); // ignore SIGPIPE to prevent crashes on client disconnects
+    int port = 1984; // default 
     if (argc >= 2) port = atoi(argv[1]);
     if (port <= 0 || port > 65535) {
         fprintf(stderr, "Usage: %s <port>\n", argv[0]);
