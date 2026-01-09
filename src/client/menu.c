@@ -5,6 +5,7 @@
 #include <string.h>
 #include <ncurses.h>
 #include <ctype.h>
+#include <time.h>
 
 typedef enum {
     SCREEN_MAIN = 0,
@@ -210,6 +211,7 @@ static void edit_nickname(Settings *st) {
     curs_set(1);
 
     char buf[32] = {0};
+    
     // ncurses input
     mvgetnstr(y, left + 31, buf, 31);
 
@@ -225,10 +227,11 @@ static void edit_nickname(Settings *st) {
 
 static void draw_play_screen(int selected) {
     clear();
+    timeout(200);
     int base_y = 2;
 
     draw_logo(base_y);
-    int y = base_y + 16;
+    int y = base_y + 12;
 
     attron(COLOR_PAIR(5) | A_BOLD);
     center_print(y, "PLAY");
@@ -390,6 +393,79 @@ static void draw_play_lobby(void) {
     refresh();
 }
 
+static int host_popup(int *out_size, char *out_pref) {
+    int size = 9;
+    int sel = 2; // 0=B,1=W,2=R
+
+    int w = 46;
+    int h = 11;
+    int y = (LINES - h) / 2;
+    int x = (COLS - w) / 2;
+    if (y < 0) y = 0;
+    if (x < 0) x = 0;
+
+    WINDOW *win = newwin(h, w, y, x);
+    keypad(win, TRUE);
+
+    while (1) {
+        werase(win);
+        box(win, 0, 0);
+
+        wattron(win, A_BOLD);
+        mvwprintw(win, 1, 2, "HOST GAME");
+        wattroff(win, A_BOLD);
+
+        mvwprintw(win, 3, 2, "Board size: %d", size);
+        mvwprintw(win, 4, 2, "Use A/D or LEFT/RIGHT to change");
+
+        const char *opt0 = "BLACK";
+        const char *opt1 = "WHITE";
+        const char *opt2 = "RANDOM";
+
+        mvwprintw(win, 6, 2, "Host color:");
+        for (int i = 0; i < 3; i++) {
+            int yy = 7;
+            int xx = 2 + i * 14;
+            if (sel == i) wattron(win, A_REVERSE | A_BOLD);
+            mvwprintw(win, yy, xx, "%s", (i==0?opt0:(i==1?opt1:opt2)));
+            if (sel == i) wattroff(win, A_REVERSE | A_BOLD);
+        }
+
+        mvwprintw(win, 9, 2, "Enter=OK   Q/ESC=Cancel");
+
+        wrefresh(win);
+
+        int ch = wgetch(win);
+        if (ch == 'q' || ch == 'Q' || ch == 27) {
+            delwin(win);
+            return 0;
+        }
+        if (ch == 10 || ch == KEY_ENTER) {
+            *out_size = size;
+            *out_pref = (sel==0?'B':(sel==1?'W':'R'));
+            delwin(win);
+            return 1;
+        }
+
+        // size: A/D or arrows
+        if (ch == 'a' || ch == 'A' || ch == KEY_LEFT) {
+            size -= 2;
+            if (size < 7) size = 19;
+        } else if (ch == 'd' || ch == 'D' || ch == KEY_RIGHT) {
+            size += 2;
+            if (size > 19) size = 7;
+        }
+
+        // color select: W/S or up/down
+        if (ch == 'w' || ch == 'W' || ch == KEY_UP) {
+            sel = (sel + 2) % 3;
+        } else if (ch == 's' || ch == 'S' || ch == KEY_DOWN) {
+            sel = (sel + 1) % 3;
+        }
+    }
+}
+
+
 int main(void) {
     Settings st = {.mouse_support = true, .colours = true, .theme = 0, .nickname = "u1"};
     Screen screen = SCREEN_MAIN;
@@ -446,13 +522,21 @@ int main(void) {
         }
         else if (screen == SCREEN_PLAY) {
             if (!ensure_connected()) {}
+            static int tick = 0;
 
-            timeout(0); 
+            timeout(200);
             pump_network();
+            tick++;
+            if (tick >= 50) {      // 50 * 200ms = 10s
+                net_send_line(&net, "GAMES");
+                tick = 0;
+            }
+
             draw_play_lobby();
 
             int ch = getch();
             if (ch == ERR) continue;
+
 
             int nav = read_nav_key(ch);
 
@@ -467,14 +551,20 @@ int main(void) {
             } else if (nav == +1 && lobby.n > 0) {
                 if (lobby.sel < lobby.n - 1) lobby.sel++;
             } else if (nav == 10 && lobby.n > 0) {
-                char cmd[64]; 
-                snprintf(cmd, sizeof(cmd), "JOIN %d", lobby.g[lobby.sel].id); 
+                char cmd[64];
+                snprintf(cmd, sizeof(cmd), "JOIN %d", lobby.g[lobby.sel].id);
                 net_send_line(&net, cmd);
+                tick = 0;
             } else if (ch == 'r' || ch == 'R') {
                 net_send_line(&net, "GAMES");
             } else if (ch == 'h' || ch == 'H') {
-                // for test its 9x9 for now
-                net_send_line(&net, "HOST 9");
+                int size;
+                char pref;
+                if (host_popup(&size, &pref)) {
+                    char cmd[64];
+                    snprintf(cmd, sizeof(cmd), "HOST %d %c", size, pref);
+                    net_send_line(&net, cmd);
+                }
             }
         }
     }

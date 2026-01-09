@@ -16,28 +16,28 @@
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <signal.h> // i need to add this so that when the client disconnects it doesn't crash the server
+#include <time.h>
 
 #define FD_SIZE 1024
 #define MAX_CLIENTS 50
 #define BUF_SIZE 4096
 #define NICK_SIZE 32
-#define MAX_GAMES 50
+#define MAX_GAMES 25
 
 typedef enum { GAME_OPEN, GAME_RUNNING } GameStatus;
 
 typedef struct {
     int id;
     int size;         // board size
-    int host_fd;      // who created
+    int host_fd;      // who created the game
     int guest_fd;     // -1 if none
+    int host_color;   // 0 = black,1 = white
     GameStatus status;
 } Game;
 
 static Game games[MAX_GAMES];
 static int game_count = 0;
 static int next_game_id = 1;
-
-
 
 typedef struct {
     int fd;                  // -1 if unused
@@ -91,7 +91,6 @@ static int add_client(Client clients[], int fd, struct sockaddr_in *peer) {
             // default nick: u<fd>
             snprintf(clients[i].nick, sizeof(clients[i].nick), "u%d", fd);
 
-            // send_fmt(fd, "WELCOME ", "type: NICK <name> \\ SUB | GAMES | HOST <size> | JOIN <id> | QUIT");
             return i;
         }
     }
@@ -169,6 +168,13 @@ static void rstrip(char *s) {
     }
 }
 
+static int host_has_game(int fd) {
+    for (int i = 0; i < game_count; i++) {
+        if (games[i].host_fd == fd) return 1;
+    }
+    return 0;
+}
+
 // Handle a complete line from client idx
 static void handle_line(Client clients[], int idx, char *line) {
     Client *c = &clients[idx];
@@ -230,7 +236,16 @@ static void handle_line(Client clients[], int idx, char *line) {
     }
 
     if (strncmp(line, "HOST ", 5) == 0) {
-        int size = atoi(line + 5);
+        int size = 0;
+        char pref = 'R'; // B/W/R
+
+        int n = sscanf(line, "HOST %d %c", &size, &pref);
+        if (n < 1) {
+            send_str(c->fd, "ERR usage: HOST <size> <B|W|R>\n");
+            return;
+        }
+
+        if (pref != 'B' && pref != 'W' && pref != 'R') pref = 'R';
 
         if (size < 7 || size > 19 || size % 2 == 0) {
             send_str(c->fd, "ERR invalid board size\n");
@@ -242,23 +257,35 @@ static void handle_line(Client clients[], int idx, char *line) {
             return;
         }
 
+        // one host/one game limit
+        if (host_has_game(c->fd)) {
+            send_str(c->fd, "ERR already hosting a game\n");
+            return;
+        }
+
+        int host_color = 0;
+        if (pref == 'B') host_color = 0;
+        else if (pref == 'W') host_color = 1;
+        else host_color = rand() % 2;
+
         Game *g = &games[game_count++];
         g->id = next_game_id++;
         g->size = size;
         g->host_fd = c->fd;
         g->guest_fd = -1;
         g->status = GAME_OPEN;
+        g->host_color = host_color;
 
         char buf[64];
-        snprintf(buf, sizeof(buf), "HOSTED %d\n", g->id);
+        snprintf(buf, sizeof(buf), "HOSTED %d %s\n", g->id, host_color==0 ? "BLACK" : "WHITE");
         send_str(c->fd, buf);
 
         char ev[64];
         snprintf(ev, sizeof(ev), "EVENT GAME_CREATED %d %d\n", g->id, g->size);
         broadcast_subscribed(clients, ev);
-
         return;
     }
+
 
     if (strncmp(line, "JOIN ", 5) == 0) {
         int id = atoi(line + 5);
@@ -282,8 +309,17 @@ static void handle_line(Client clients[], int idx, char *line) {
         g->guest_fd = c->fd;
         g->status = GAME_RUNNING;
 
-        send_str(g->host_fd, "JOINED BLACK\n");
-        send_str(g->guest_fd, "JOINED WHITE\n");
+        // :) im proud of this part
+        const char *hc = (g->host_color == 0) ? "BLACK" : "WHITE";
+        const char *gc = (g->host_color == 0) ? "WHITE" : "BLACK";
+
+        char a[32], b[32];
+        snprintf(a, sizeof(a), "JOINED %s\n", hc);
+        snprintf(b, sizeof(b), "JOINED %s\n", gc);
+
+        send_str(g->host_fd, a);
+        send_str(g->guest_fd, b);
+
 
         char ev[64];
         snprintf(ev, sizeof(ev), "EVENT GAME_STARTED %d\n", g->id);
@@ -353,6 +389,8 @@ static void process_client_data(Client clients[], int idx) {
 
 int main(int argc, char **argv) {
     signal(SIGPIPE, SIG_IGN); // ignore SIGPIPE to prevent crashes on client disconnects
+    srand((unsigned)time(NULL));
+
     int port = 1984; // default 
     if (argc >= 2) port = atoi(argv[1]);
     if (port <= 0 || port > 65535) {
