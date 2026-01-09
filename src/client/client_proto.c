@@ -39,6 +39,20 @@ void parse_server_line(const char *line, Screen *screen) {
         return;
     }
 
+    int nid;
+    char nb[32], nw[32];
+
+    if (sscanf(line, "NICKS %d %31s %31s", &nid, nb, nw) == 3) {
+        if (nid == my_game_id) {
+            strncpy(nick_black, nb, sizeof(nick_black)-1);
+            nick_black[sizeof(nick_black)-1] = '\0';
+            strncpy(nick_white, nw, sizeof(nick_white)-1);
+            nick_white[sizeof(nick_white)-1] = '\0';
+        }
+        return;
+    }
+
+
     if (sscanf(line, "HOSTED %d %15s", &gid, col) == 2) {
         my_hosting = 1;
         my_game_id = gid;
@@ -63,19 +77,25 @@ void parse_server_line(const char *line, Screen *screen) {
     }
 
     int go_id;
-    char winner[32];
-    char reason[32];
+    char winner[32], reason[32];
 
     if (sscanf(line, "GAME_OVER %d %31s %31s", &go_id, winner, reason) == 3) {
         if (go_id == my_game_id) {
-            my_hosting = 0;
-            my_game_id = -1;
-            my_game_size = 0;
-            my_color[0] = '\0';
-            *screen = SCREEN_PLAY;
+            gameover_id = go_id;
+
+            strncpy(gameover_winner, winner, sizeof(gameover_winner)-1);
+            gameover_winner[sizeof(gameover_winner)-1] = '\0';
+
+            strncpy(gameover_reason, reason, sizeof(gameover_reason)-1);
+            gameover_reason[sizeof(gameover_reason)-1] = '\0';
+
+            *screen = SCREEN_GAMEOVER;
         }
         return;
     }
+
+
+
 
 
     if (strcmp(line, "OK CANCELLED") == 0) {

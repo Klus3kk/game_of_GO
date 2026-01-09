@@ -39,6 +39,16 @@ int prev_board_valid = 0;  // 1 if prev_board valid
 int score_b = 0; // captures by BLACK
 int score_w = 0; // captures by WHITE
 
+char gameover_winner[16] = "";
+char gameover_reason[32] = "";
+int gameover_id = -1;
+
+char nick_black[32] = "";
+char nick_white[32] = "";
+int cap_black = 0;
+int cap_white = 0;
+
+
 void client_clear_board(int size) {
     int n = size * size;
     for (int i = 0; i < n; i++) g_board[i] = 0;

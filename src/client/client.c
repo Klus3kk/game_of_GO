@@ -103,29 +103,28 @@ int main()
             }
 
             if (nav == -1)
-                sel_settings = (sel_settings + 5) % 6;
+                sel_settings = (sel_settings + 4) % 5;
             else if (nav == +1)
-                sel_settings = (sel_settings + 1) % 6;
+                sel_settings = (sel_settings + 1) % 5;
             else if (ch == ' ')
             {
-                // these arent working :)
-                if (sel_settings == 0)
+                if (sel_settings == 0) {
                     st.mouse_support = !st.mouse_support;
-                else if (sel_settings == 1)
-                    st.colours = !st.colours;
-                else if (sel_settings >= 2 && sel_settings <= 4)
-                    st.theme = sel_settings - 2;
+                } else if (sel_settings >= 1 && sel_settings <= 3) {
+                    st.theme = sel_settings - 1;
+                    apply_theme(st.theme);
+                }
             }
             else if (nav == 10)
             {
-                if (sel_settings == 5)
+                if (sel_settings == 4) {
                     edit_nickname(&st);
-                else if (sel_settings == 0)
+                } else if (sel_settings == 0) {
                     st.mouse_support = !st.mouse_support;
-                else if (sel_settings == 1)
-                    st.colours = !st.colours;
-                else if (sel_settings >= 2 && sel_settings <= 4)
-                    st.theme = sel_settings - 2;
+                } else if (sel_settings >= 1 && sel_settings <= 3) {
+                    st.theme = sel_settings - 1;
+                    apply_theme(st.theme);
+                }
             }
         }
         else if (screen == SCREEN_PLAY)
@@ -354,6 +353,23 @@ int main()
                 snprintf(cmd, sizeof(cmd), "PASS %d", my_game_id);
                 net_send_line(&net, cmd);
             }
+        } else if (screen == SCREEN_GAMEOVER) {
+            timeout(-1);
+            draw_gameover_screen();
+            getch();
+
+            // sprzątanie dopiero po obejrzeniu wyniku
+            my_hosting = 0;
+            my_game_id = -1;
+            my_game_size = 0;
+            my_color[0] = '\0';
+
+            gameover_winner[0] = '\0';
+            gameover_reason[0] = '\0';
+            gameover_id = -1;
+
+            screen = SCREEN_PLAY;
+            timeout(200);
         }
     }
 

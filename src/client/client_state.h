@@ -41,6 +41,15 @@ extern int white_secs;        // time left white
 extern unsigned char prev_board[BOARD_MAX_SIZE * BOARD_MAX_SIZE]; // previous board snapshot
 extern int prev_board_valid;  // 1 if prev_board valid
 
+extern char gameover_winner[16];
+extern char gameover_reason[32];
+extern int gameover_id;
+
+extern char nick_black[32];
+extern char nick_white[32];
+extern int cap_black;
+extern int cap_white;
+
 extern int score_b; // captures by BLACK
 extern int score_w; // captures by WHITE
 

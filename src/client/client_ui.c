@@ -5,7 +5,8 @@
 #include <ncurses.h>
 #include <locale.h>
 
-static void draw_logo(int y) {
+static void draw_logo(int y)
+{
     const char *logo[] = {
         "      _____            _____    ",
         "  ___|\\    \\      ____|\\    \\   ",
@@ -20,31 +21,36 @@ static void draw_logo(int y) {
         "   \\( |____|/       \\(    )/    ",
         "    '   )/           '    '     ",
         "        '                       ",
-        NULL
-    };
+        NULL};
 
     int width = 0;
-    for (int i = 0; logo[i]; i++) {
+    for (int i = 0; logo[i]; i++)
+    {
         int len = (int)strlen(logo[i]);
-        if (len > width) width = len;
+        if (len > width)
+            width = len;
     }
 
     int x = (COLS - width) / 2;
-    if (x < 0) x = 0;
+    if (x < 0)
+        x = 0;
 
     attron(COLOR_PAIR(1) | A_BOLD);
-    for (int i = 0; logo[i]; i++) {
+    for (int i = 0; logo[i]; i++)
+    {
         mvprintw(y + i, x, "%s", logo[i]);
     }
     attroff(COLOR_PAIR(1) | A_BOLD);
 }
 
-static void center_print(int y, const char *s) {
+static void center_print(int y, const char *s)
+{
     int x = (COLS - (int)strlen(s)) / 2;
     mvprintw(y, (x < 0 ? 0 : x), "%s", s);
 }
 
-void init_ui(void) {
+void init_ui(void)
+{
     setlocale(LC_ALL, "");
     initscr();
     cbreak();
@@ -52,36 +58,47 @@ void init_ui(void) {
     keypad(stdscr, TRUE);
     curs_set(0);
 
-    if (has_colors()) {
+    if (has_colors())
+    {
         start_color();
         use_default_colors();
-        init_pair(1, COLOR_CYAN,   -1);  // title
-        init_pair(2, COLOR_WHITE,  -1);  // normal
-        init_pair(3, COLOR_BLACK,  COLOR_CYAN); // highlight
-        init_pair(4, COLOR_GREEN,  -1);  // ok/selected
-        init_pair(5, COLOR_MAGENTA,-1);  // section
-        init_pair(6, COLOR_YELLOW, -1);  // hints
+        init_pair(1, COLOR_CYAN, -1);          // title
+        init_pair(2, COLOR_WHITE, -1);         // normal
+        init_pair(3, COLOR_BLACK, COLOR_CYAN); // highlight
+        init_pair(4, COLOR_GREEN, -1);         // ok/selected
+        init_pair(5, COLOR_MAGENTA, -1);       // section
+        init_pair(6, COLOR_YELLOW, -1);        // hints
     }
-    mousemask(ALL_MOUSE_EVENTS | REPORT_MOUSE_POSITION, NULL);
+    mousemask(BUTTON1_CLICKED | BUTTON1_PRESSED | BUTTON1_RELEASED, NULL);
+
     mouseinterval(0);
 }
 
-void shutdown_ui(void) {
+void shutdown_ui(void)
+{
     endwin();
 }
 
-int read_nav_key(int ch) {
+int read_nav_key(int ch)
+{
     // Returns: -1 up, +1 down, 0 none, 10 enter, 27 esc/back, 100 left, 101 right
-    if (ch == KEY_UP || ch == 'w' || ch == 'W') return -1;
-    if (ch == KEY_DOWN || ch == 's' || ch == 'S') return +1;
-    if (ch == KEY_LEFT || ch == 'a' || ch == 'A') return 100;
-    if (ch == KEY_RIGHT || ch == 'd' || ch == 'D') return 101;
-    if (ch == 10 || ch == KEY_ENTER) return 10;
-    if (ch == 27) return 27; // ESC 
+    if (ch == KEY_UP || ch == 'w' || ch == 'W')
+        return -1;
+    if (ch == KEY_DOWN || ch == 's' || ch == 'S')
+        return +1;
+    if (ch == KEY_LEFT || ch == 'a' || ch == 'A')
+        return 100;
+    if (ch == KEY_RIGHT || ch == 'd' || ch == 'D')
+        return 101;
+    if (ch == 10 || ch == KEY_ENTER)
+        return 10;
+    if (ch == 27)
+        return 27; // ESC
     return 0;
 }
 
-void draw_wait_screen(void) {
+void draw_wait_screen(void)
+{
     clear();
     int base_y = 2;
     draw_logo(base_y);
@@ -94,7 +111,7 @@ void draw_wait_screen(void) {
     y += 2;
 
     char info[128];
-    snprintf(info, sizeof(info), "Game #%d  size=%d  you=%s", my_game_id, my_game_size, my_color[0]?my_color:"?");
+    snprintf(info, sizeof(info), "Game #%d  size=%d  you=%s", my_game_id, my_game_size, my_color[0] ? my_color : "?");
     attron(COLOR_PAIR(2));
     center_print(y, info);
     attroff(COLOR_PAIR(2));
@@ -107,7 +124,8 @@ void draw_wait_screen(void) {
     refresh();
 }
 
-void draw_main_menu(int selected) {
+void draw_main_menu(int selected)
+{
     clear();
     int base_y = 2;
 
@@ -122,13 +140,17 @@ void draw_main_menu(int selected) {
     const char *items[] = {"PLAY", "SETTINGS", "EXIT"};
     int n = 3;
 
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < n; i++)
+    {
         int y = menu_y + i * 2;
-        if (i == selected) {
+        if (i == selected)
+        {
             attron(COLOR_PAIR(3) | A_BOLD);
             center_print(y, items[i]);
             attroff(COLOR_PAIR(3) | A_BOLD);
-        } else {
+        }
+        else
+        {
             attron(COLOR_PAIR(2));
             center_print(y, items[i]);
             attroff(COLOR_PAIR(2));
@@ -138,9 +160,12 @@ void draw_main_menu(int selected) {
     refresh();
 }
 
-void draw_settings_screen(const Settings *st, int selected) {
+void draw_settings_screen(const Settings *st, int selected)
+{
     clear();
     int base_y = 2;
+
+    int compact = (COLS < 60 || LINES < 28) ? 1 : 0;
 
     draw_logo(base_y);
     int y = base_y + 16;
@@ -148,67 +173,71 @@ void draw_settings_screen(const Settings *st, int selected) {
     attron(COLOR_PAIR(5) | A_BOLD);
     center_print(y, "SETTINGS");
     attroff(COLOR_PAIR(5) | A_BOLD);
-    y += 2;
+    y += compact ? 1 : 2;
 
     attron(COLOR_PAIR(6));
-    center_print(y, "Space: toggle  |  Enter: edit/select  |  Q/ESC: back");
+    if (compact) center_print(y, "Space/Enter: select   Q/ESC: back");
+    else         center_print(y, "Space: toggle  |  Enter: edit/select  |  Q/ESC: back");
     attroff(COLOR_PAIR(6));
-    y += 2;
+    y += compact ? 1 : 2;
 
-    // Layout
-    int left = (COLS - 40) / 2;
-    if (left < 0) left = 0;
-
+    // BASIC
     attron(COLOR_PAIR(5) | A_BOLD);
-    mvprintw(y, left, "BASIC");
+    center_print(y, "BASIC");
     attroff(COLOR_PAIR(5) | A_BOLD);
-    y += 2;
+    y += compact ? 1 : 2;
 
     const char *mouse_line = st->mouse_support ? "[x] Mouse Support" : "[ ] Mouse Support";
-    const char *col_line   = st->colours       ? "[x] Colours"       : "[ ] Colours";
 
-    const char *lines_basic[] = { mouse_line, col_line };
-    for (int i = 0; i < 2; i++) {
-        if (selected == i) attron(COLOR_PAIR(3) | A_BOLD);
-        mvprintw(y + i, left, "%s", lines_basic[i]);
-        if (selected == i) attroff(COLOR_PAIR(3) | A_BOLD);
-    }
-    y += 3;
+    if (selected == 0) attron(COLOR_PAIR(3) | A_BOLD);
+    center_print(y, mouse_line);
+    if (selected == 0) attroff(COLOR_PAIR(3) | A_BOLD);
 
+
+    y += compact ? 1 : 3;
+
+    // THEMES
     attron(COLOR_PAIR(5) | A_BOLD);
-    mvprintw(y, left, "THEMES");
+    center_print(y, "THEMES");
     attroff(COLOR_PAIR(5) | A_BOLD);
-    y += 2;
+    y += compact ? 1 : 2;
 
-    // themes
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 3; i++)
+    {
         char tline[64];
         snprintf(tline, sizeof(tline), "[%c] Theme %d", (st->theme == i ? 'x' : ' '), i + 1);
-        int idx = 2 + i;
+
+        int idx = 1 + i; // 1..3
         if (selected == idx) attron(COLOR_PAIR(3) | A_BOLD);
-        mvprintw(y + i, left, "%s", tline);
+        center_print(y + i, tline);
         if (selected == idx) attroff(COLOR_PAIR(3) | A_BOLD);
     }
-    y += 4;
 
+    y += compact ? 3 : 4;
+
+    // NICKNAME
     attron(COLOR_PAIR(5) | A_BOLD);
-    mvprintw(y, left, "NICKNAME");
+    center_print(y, "NICKNAME");
     attroff(COLOR_PAIR(5) | A_BOLD);
-    y += 2;
+    y += compact ? 1 : 2;
 
     char nline[64];
     snprintf(nline, sizeof(nline), "%s", st->nickname[0] ? st->nickname : "(not set)");
-    int nick_idx = 5;
+
+    int nick_idx = 4; // było 5, teraz jest 4
     if (selected == nick_idx) attron(COLOR_PAIR(3) | A_BOLD);
-    mvprintw(y, left, "%s", nline);
+    center_print(y, nline);
     if (selected == nick_idx) attroff(COLOR_PAIR(3) | A_BOLD);
 
     refresh();
 }
 
-void edit_nickname(Settings *st) {
+
+void edit_nickname(Settings *st)
+{
     int left = (COLS - 40) / 2;
-    if (left < 0) left = 0;
+    if (left < 0)
+        left = 0;
     int y = LINES - 3;
 
     attron(COLOR_PAIR(6));
@@ -224,8 +253,13 @@ void edit_nickname(Settings *st) {
     // ncurses input
     mvgetnstr(y, left + 31, buf, 31);
 
-    for (int i = 0; buf[i]; i++) {
-        if ((unsigned char)buf[i] <= 32) { buf[i] = '\0'; break; }
+    for (int i = 0; buf[i]; i++)
+    {
+        if ((unsigned char)buf[i] <= 32)
+        {
+            buf[i] = '\0';
+            break;
+        }
     }
     strncpy(st->nickname, buf, sizeof(st->nickname) - 1);
     st->nickname[sizeof(st->nickname) - 1] = '\0';
@@ -234,7 +268,8 @@ void edit_nickname(Settings *st) {
     curs_set(0);
 }
 
-void draw_play_screen(int selected) {
+void draw_play_screen(int selected)
+{
     clear();
     timeout(200);
     int base_y = 2;
@@ -255,13 +290,17 @@ void draw_play_screen(int selected) {
     const char *items[] = {"HOST", "JOIN", "START"};
     int n = 3;
 
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < n; i++)
+    {
         int row = y + i * 2;
-        if (i == selected) {
+        if (i == selected)
+        {
             attron(COLOR_PAIR(3) | A_BOLD);
             center_print(row, items[i]);
             attroff(COLOR_PAIR(3) | A_BOLD);
-        } else {
+        }
+        else
+        {
             attron(COLOR_PAIR(2));
             center_print(row, items[i]);
             attroff(COLOR_PAIR(2));
@@ -271,7 +310,8 @@ void draw_play_screen(int selected) {
     refresh(); // this should work so that it refreshes every 5-10 seconds for example, or, even better, if the user presses a key like 'r' for refresh
 }
 
-void draw_play_lobby(void) {
+void draw_play_lobby(void)
+{
     clear();
     int base_y = 2;
 
@@ -288,7 +328,8 @@ void draw_play_lobby(void) {
     attroff(COLOR_PAIR(6));
     y += 2;
 
-    if (!net_ready) {
+    if (!net_ready)
+    {
         attron(COLOR_PAIR(6));
         center_print(y + 2, "Not connected to server.");
         attroff(COLOR_PAIR(6));
@@ -297,13 +338,16 @@ void draw_play_lobby(void) {
     }
 
     int left = (COLS - 44) / 2;
-    if (left < 0) left = 0;
+    if (left < 0)
+        left = 0;
 
     if (lobby.n == 0) {
-        mvprintw(y + 2, left, "(no open games)");
+        center_print(y + 2, "(no open games)");
         refresh();
         return;
     }
+
+
 
     int max_show = 12;
     int start = 0;
@@ -313,12 +357,16 @@ void draw_play_lobby(void) {
     lobby_list_visible = max_show;
     lobby_list_start = start;
 
-    if (lobby.sel >= max_show) start = lobby.sel - (max_show - 1);
-    if (start < 0) start = 0;
+    if (lobby.sel >= max_show)
+        start = lobby.sel - (max_show - 1);
+    if (start < 0)
+        start = 0;
 
-    for (int i = 0; i < max_show; i++) {
+    for (int i = 0; i < max_show; i++)
+    {
         int idx = start + i;
-        if (idx >= lobby.n) break;
+        if (idx >= lobby.n)
+            break;
 
         LobbyGame *g = &lobby.g[idx];
         const char *st = (g->st == LOBBY_RUNNING) ? "RUNNING" : "OPEN";
@@ -326,15 +374,21 @@ void draw_play_lobby(void) {
         char row[128];
         snprintf(row, sizeof(row), "#%d  size=%d  P=%d  %s", g->id, g->size, g->players, st);
 
-        if (idx == lobby.sel) attron(COLOR_PAIR(3) | A_BOLD);
-        mvprintw(y + i, left, "%s", row);
-        if (idx == lobby.sel) attroff(COLOR_PAIR(3) | A_BOLD);
+        if (idx == lobby.sel)
+            attron(COLOR_PAIR(3) | A_BOLD);
+        int x = (COLS - (int)strlen(row)) / 2;
+        if (x < 0)
+            x = 0;
+        mvprintw(y + i, x, "%s", row);
+        if (idx == lobby.sel)
+            attroff(COLOR_PAIR(3) | A_BOLD);
     }
 
     refresh();
 }
 
-int host_popup(int *out_size, char *out_pref) {
+int host_popup(int *out_size, char *out_pref)
+{
     int size = 9;
     int sel = 2; // 0=B,1=W,2=R
 
@@ -342,13 +396,19 @@ int host_popup(int *out_size, char *out_pref) {
     int h = 11;
     int y = (LINES - h) / 2;
     int x = (COLS - w) / 2;
-    if (y < 0) y = 0;
-    if (x < 0) x = 0;
+    if (y < 0)
+        y = 0;
+    if (x < 0)
+        x = 0;
+
+    clear();
+    refresh();
 
     WINDOW *win = newwin(h, w, y, x);
     keypad(win, TRUE);
 
-    while (1) {
+    while (1)
+    {
         werase(win);
         box(win, 0, 0);
 
@@ -364,12 +424,15 @@ int host_popup(int *out_size, char *out_pref) {
         const char *opt2 = "RANDOM";
 
         mvwprintw(win, 6, 2, "Host color:");
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 3; i++)
+        {
             int yy = 7;
             int xx = 2 + i * 14;
-            if (sel == i) wattron(win, A_REVERSE | A_BOLD);
-            mvwprintw(win, yy, xx, "%s", (i==0?opt0:(i==1?opt1:opt2)));
-            if (sel == i) wattroff(win, A_REVERSE | A_BOLD);
+            if (sel == i)
+                wattron(win, A_REVERSE | A_BOLD);
+            mvwprintw(win, yy, xx, "%s", (i == 0 ? opt0 : (i == 1 ? opt1 : opt2)));
+            if (sel == i)
+                wattroff(win, A_REVERSE | A_BOLD);
         }
 
         mvwprintw(win, 9, 2, "Enter=OK   Q/ESC=Cancel");
@@ -377,51 +440,72 @@ int host_popup(int *out_size, char *out_pref) {
         wrefresh(win);
 
         int ch = wgetch(win);
-        if (ch == 'q' || ch == 'Q' || ch == 27) {
+        if (ch == 'q' || ch == 'Q' || ch == 27)
+        {
             delwin(win);
+            clear();
+            refresh();
             return 0;
         }
-        if (ch == 10 || ch == KEY_ENTER) {
+        if (ch == 10 || ch == KEY_ENTER)
+        {
             *out_size = size;
-            *out_pref = (sel==0?'B':(sel==1?'W':'R'));
+            *out_pref = (sel == 0 ? 'B' : (sel == 1 ? 'W' : 'R'));
             delwin(win);
+            clear();
+            refresh();
             return 1;
         }
 
         // size: A/D or arrows
-        if (ch == 'a' || ch == 'A' || ch == KEY_LEFT) {
+        if (ch == 'a' || ch == 'A' || ch == KEY_LEFT)
+        {
             size -= 2;
-            if (size < 7) size = 19;
-        } else if (ch == 'd' || ch == 'D' || ch == KEY_RIGHT) {
+            if (size < 7)
+                size = 19;
+        }
+        else if (ch == 'd' || ch == 'D' || ch == KEY_RIGHT)
+        {
             size += 2;
-            if (size > 19) size = 7;
+            if (size > 19)
+                size = 7;
         }
 
         // color select: W/S or up/down
-        if (ch == 'w' || ch == 'W' || ch == KEY_UP) {
+        if (ch == 'w' || ch == 'W' || ch == KEY_UP)
+        {
             sel = (sel + 2) % 3;
-        } else if (ch == 's' || ch == 'S' || ch == KEY_DOWN) {
+        }
+        else if (ch == 's' || ch == 'S' || ch == KEY_DOWN)
+        {
             sel = (sel + 1) % 3;
         }
     }
 }
 
-void apply_theme(int theme) {
-    if (!has_colors()) return;
+void apply_theme(int theme)
+{
+    if (!has_colors())
+        return;
     start_color();
     use_default_colors();
 
-    if (theme == 0) {
+    if (theme == 0)
+    {
         init_pair(1, COLOR_CYAN, -1);
         init_pair(3, COLOR_BLACK, COLOR_CYAN);
         init_pair(5, COLOR_MAGENTA, -1);
         init_pair(6, COLOR_YELLOW, -1);
-    } else if (theme == 1) {
+    }
+    else if (theme == 1)
+    {
         init_pair(1, COLOR_GREEN, -1);
         init_pair(3, COLOR_BLACK, COLOR_GREEN);
         init_pair(5, COLOR_CYAN, -1);
         init_pair(6, COLOR_WHITE, -1);
-    } else {
+    }
+    else
+    {
         init_pair(1, COLOR_WHITE, -1);
         init_pair(3, COLOR_BLACK, COLOR_WHITE);
         init_pair(5, COLOR_YELLOW, -1);
@@ -429,72 +513,84 @@ void apply_theme(int theme) {
     }
 }
 
-static void draw_board_grid(int top, int left, int size) {
-    const int cell_w = 3;     // "   "
+static void draw_board_grid(int top, int left, int size, int cell_w)
+{
     // board geometry:
     // width  = 1 + size*(cell_w) + size*(1 vertical) = 1 + size*(cell_w+1)
     // height = 1 + size*(1 content) + (size-1)*(1 separator) = 2*size
     // plus bottom border -> 2*size + 1
-    const int board_h = 2*size + 1;
+    const int board_h = 2 * size + 1;
     const int board_w = 1 + size*(cell_w + 1);
 
-    const char *TL="┌", *TR="┐", *BL="└", *BR="┘";
-    const char *HZ="─", *VT="│";
-    const char *TJ="┬", *BJ="┴", *LJ="├", *RJ="┤", *XJ="┼";
+
+    const char *TL = "┌", *TR = "┐", *BL = "└", *BR = "┘";
+    const char *HZ = "─", *VT = "│";
+    const char *TJ = "┬", *BJ = "┴", *LJ = "├", *RJ = "┤", *XJ = "┼";
 
     // top border
     mvaddstr(top, left, TL);
-    for (int x = 0; x < size; x++) {
-        for (int k = 0; k < cell_w; k++) addstr(HZ);
-        addstr(x == size-1 ? TR : TJ);
+    for (int x = 0; x < size; x++)
+    {
+        for (int k = 0; k < cell_w; k++)
+            addstr(HZ);
+        addstr(x == size - 1 ? TR : TJ);
     }
 
     // rows
-    for (int y = 0; y < size; y++) {
-        int ry = top + 1 + y*2;
+    for (int y = 0; y < size; y++)
+    {
+        int ry = top + 1 + y * 2;
 
         // content line
         mvaddstr(ry, left, VT);
-        for (int x = 0; x < size; x++) {
-            int idx = y*size + x;
+        for (int x = 0; x < size; x++)
+        {
+            int idx = y * size + x;
 
             // cell interior x origin (first char inside cell)
-            int cx = left + 1 + x*(cell_w+1);
+            int cx = left + 1 + x * (cell_w + 1);
 
             // background/cursor highlight for whole cell
-            if (x == cur_x && y == cur_y) attron(COLOR_PAIR(3) | A_BOLD);
+            if (x == cur_x && y == cur_y)
+                attron(COLOR_PAIR(3) | A_BOLD);
 
             // cell fill (spaces)
-            mvaddch(ry, cx + 0, ' ');
-            mvaddch(ry, cx + 1, ' ');
-            mvaddch(ry, cx + 2, ' ');
+            for (int k = 0; k < cell_w; k++) mvaddch(ry, cx + k, ' ');
+
 
             // stone in middle
-            if (g_board[idx] == 1) {
+            if (g_board[idx] == 1)
+            {
                 // B
                 attron(COLOR_PAIR(4) | A_BOLD);
                 mvaddch(ry, cx + 1, 'B');
                 attroff(COLOR_PAIR(4) | A_BOLD);
-            } else if (g_board[idx] == 2) {
+            }
+            else if (g_board[idx] == 2)
+            {
                 // W
                 attron(COLOR_PAIR(2) | A_BOLD);
                 mvaddch(ry, cx + 1, 'W');
                 attroff(COLOR_PAIR(2) | A_BOLD);
             }
 
-            if (x == cur_x && y == cur_y) attroff(COLOR_PAIR(3) | A_BOLD);
+            if (x == cur_x && y == cur_y)
+                attroff(COLOR_PAIR(3) | A_BOLD);
 
             // right separator
             mvaddstr(ry, cx + cell_w, VT);
         }
 
         // separator line
-        if (y != size-1) {
+        if (y != size - 1)
+        {
             int sy = ry + 1;
             mvaddstr(sy, left, LJ);
-            for (int x = 0; x < size; x++) {
-                for (int k = 0; k < cell_w; k++) addstr(HZ);
-                addstr(x == size-1 ? RJ : XJ);
+            for (int x = 0; x < size; x++)
+            {
+                for (int k = 0; k < cell_w; k++)
+                    addstr(HZ);
+                addstr(x == size - 1 ? RJ : XJ);
             }
         }
     }
@@ -502,9 +598,11 @@ static void draw_board_grid(int top, int left, int size) {
     // bottom border
     int by = top + board_h - 1;
     mvaddstr(by, left, BL);
-    for (int x = 0; x < size; x++) {
-        for (int k = 0; k < cell_w; k++) addstr(HZ);
-        addstr(x == size-1 ? BR : BJ);
+    for (int x = 0; x < size; x++)
+    {
+        for (int k = 0; k < cell_w; k++)
+            addstr(HZ);
+        addstr(x == size - 1 ? BR : BJ);
     }
 
     // update mouse mapping origins for this grid:
@@ -515,7 +613,8 @@ static void draw_board_grid(int top, int left, int size) {
     game_box_left = left;
 }
 
-static void draw_top_bar(void) {
+static void draw_top_bar(void)
+{
     int bm = black_secs / 60, bs = black_secs % 60;
     int wm = white_secs / 60, ws = white_secs % 60;
 
@@ -524,44 +623,114 @@ static void draw_top_bar(void) {
 
     // score placeholders (score_b/score_w)
     mvprintw(0, 1,
-        "Game #%d  You=%s  ToMove=%s   Score B %d - W %d   Time B %02d:%02d | W %02d:%02d",
-        my_game_id, my_color,
-        (g_to_move==0?"BLACK":"WHITE"),
-        score_b, score_w,
-        bm, bs, wm, ws
-    );
+             "Game #%d  You=%s  ToMove=%s   Score B %d - W %d   Time B %02d:%02d | W %02d:%02d",
+             my_game_id, my_color,
+             (g_to_move == 0 ? "BLACK" : "WHITE"),
+             score_b, score_w,
+             bm, bs, wm, ws);
     attroff(COLOR_PAIR(6));
 }
 
-static void draw_bottom_bar(void) {
-    int y = LINES-1;
+static void draw_bottom_bar(void)
+{
+    int y = LINES - 1;
     attron(COLOR_PAIR(6));
     mvhline(y, 0, ' ', COLS);
     mvprintw(y, 1, "Mouse: click=select  double=place  Arrows/WASD move  Enter=place  P=pass  Q/ESC=exit");
     attroff(COLOR_PAIR(6));
 }
 
-void draw_game_screen(void) {
+void draw_game_screen(void)
+{
     clear();
     draw_top_bar();
     draw_bottom_bar();
 
-    const int cell_w = 3;
-    const int board_h = 2*my_game_size + 1;
-    const int board_w = 1 + my_game_size*(cell_w + 1);
+    int cell_w = 3;
+    int board_w = 1 + my_game_size * (cell_w + 1);
+
+    // jeśli za szeroko -> kompakt
+    if (board_w > COLS - 2)
+    {
+        cell_w = 1;
+        board_w = 1 + my_game_size * (cell_w + 1);
+    }
+
+    const int board_h = 2 * my_game_size + 1;
 
     int top = (LINES - board_h) / 2;
     int left = (COLS - board_w) / 2;
 
     // keep inside screen with top+bottom bars
-    if (top < 1) top = 1;
-    if (left < 0) left = 0;
-    if (top + board_h >= LINES-1) top = 1;
+    if (top < 1)
+        top = 1;
+    if (left < 0)
+        left = 0;
+    if (top + board_h >= LINES - 1)
+        top = 1;
 
     // optional: color frame/lines stronger
     attron(COLOR_PAIR(5) | A_BOLD);
-    draw_board_grid(top, left, my_game_size);
+    draw_board_grid(top, left, my_game_size, cell_w);
     attroff(COLOR_PAIR(5) | A_BOLD);
+
+    refresh();
+}
+
+void draw_gameover_screen(void)
+{
+    clear();
+    int base_y = 2;
+    int compact = (COLS < 60 || LINES < 28) ? 1 : 0;
+    draw_logo(base_y);
+
+    int y = base_y + 16;
+
+    attron(COLOR_PAIR(5) | A_BOLD);
+    center_print(y, "GAME OVER");
+    attroff(COLOR_PAIR(5) | A_BOLD);
+    y += 2;
+
+    char line1[128];
+    snprintf(line1, sizeof(line1), "Game #%d", gameover_id);
+    attron(COLOR_PAIR(2));
+    center_print(y, line1);
+    attroff(COLOR_PAIR(2));
+    y += 2;
+
+    // Winner
+    char line2[128];
+    snprintf(line2, sizeof(line2), "Winner: %s", gameover_winner[0] ? gameover_winner : "?");
+    attron(COLOR_PAIR(4) | A_BOLD);
+    center_print(y, line2);
+    attroff(COLOR_PAIR(4) | A_BOLD);
+    y += 1;
+
+    // YOU WIN / YOU LOSE
+    if (my_color[0] && gameover_winner[0])
+    {
+        int you_win = (strcmp(my_color, gameover_winner) == 0);
+        attron(COLOR_PAIR(you_win ? 4 : 2) | A_BOLD);
+        center_print(y, you_win ? "YOU WIN" : "YOU LOSE");
+        attroff(COLOR_PAIR(you_win ? 4 : 2) | A_BOLD);
+        y += 2;
+    }
+    else
+    {
+        y += 2;
+    }
+
+    // Reason
+    char line3[128];
+    snprintf(line3, sizeof(line3), "Reason: %s", gameover_reason[0] ? gameover_reason : "?");
+    attron(COLOR_PAIR(2));
+    center_print(y, line3);
+    attroff(COLOR_PAIR(2));
+    y += 3;
+
+    attron(COLOR_PAIR(6));
+    center_print(y, "Press any key to return to PLAY");
+    attroff(COLOR_PAIR(6));
 
     refresh();
 }

@@ -7,6 +7,7 @@ void shutdown_ui(void);
 int read_nav_key(int ch);
 
 void draw_wait_screen(void);
+void draw_gameover_screen(void);
 void draw_main_menu(int selected);
 void draw_settings_screen(const Settings *st, int selected);
 void edit_nickname(Settings *st);

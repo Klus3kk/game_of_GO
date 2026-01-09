@@ -6,8 +6,10 @@ typedef enum {
     SCREEN_SETTINGS = 1,
     SCREEN_PLAY = 2,
     SCREEN_WAIT = 3,
-    SCREEN_GAME = 4
+    SCREEN_GAME = 4,
+    SCREEN_GAMEOVER = 5
 } Screen;
+
 
 typedef struct {
     bool mouse_support;

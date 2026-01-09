@@ -18,7 +18,7 @@
 * Overall stats, notifications, player list on server
 
 # Current problems
-* When player leaves the game, the game is still playing, it should work like if someone leaves unexpectectly then the second player wins and the game is removed
+* When player leaves the game, the game is still playing, it should work like if someone leaves unexpectectly then the second player wins and the game is removed /
 * Layout is a bit off
 * Mouse support still not working
 * Nicknames, captures etc should be shown in-game
