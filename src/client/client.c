@@ -1,4 +1,4 @@
-// Interactive TCP client.
+// Interactive TCP client (prototype).
 // - Reads from stdin (lines) and sends to server,
 // - Reads from socket and prints server responses.
 // Run:   ./client 127.0.0.1 1984
