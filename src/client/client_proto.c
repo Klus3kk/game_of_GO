@@ -44,10 +44,10 @@ void parse_server_line(const char *line, Screen *screen) {
 
     if (sscanf(line, "NICKS %d %31s %31s", &nid, nb, nw) == 3) {
         if (nid == my_game_id) {
-            strncpy(nick_black, nb, sizeof(nick_black)-1);
-            nick_black[sizeof(nick_black)-1] = '\0';
-            strncpy(nick_white, nw, sizeof(nick_white)-1);
-            nick_white[sizeof(nick_white)-1] = '\0';
+            strncpy(black_nick, nb, sizeof(black_nick)-1);
+            black_nick[sizeof(black_nick)-1] = '\0';
+            strncpy(white_nick, nw, sizeof(white_nick)-1);
+            white_nick[sizeof(white_nick)-1] = '\0';
         }
         return;
     }

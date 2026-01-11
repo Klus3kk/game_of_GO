@@ -45,8 +45,8 @@ extern char gameover_winner[16];
 extern char gameover_reason[32];
 extern int gameover_id;
 
-extern char nick_black[32];
-extern char nick_white[32];
+extern char black_nick[32];
+extern char white_nick[32];
 extern int cap_black;
 extern int cap_white;
 

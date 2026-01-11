@@ -43,8 +43,8 @@ char gameover_winner[16] = "";
 char gameover_reason[32] = "";
 int gameover_id = -1;
 
-char nick_black[32] = "";
-char nick_white[32] = "";
+char black_nick[32] = "";
+char white_nick[32] = "";
 int cap_black = 0;
 int cap_white = 0;
 

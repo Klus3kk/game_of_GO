@@ -313,10 +313,12 @@ void draw_play_screen(int selected)
 void draw_play_lobby(void)
 {
     clear();
-    int base_y = 2;
 
-    draw_logo(base_y);
-    int y = base_y + 16;
+    int compact = (COLS < 70 || LINES < 28) ? 1 : 0;
+    int base_y = compact ? 1 : 2;
+
+    if (!compact) draw_logo(base_y);
+    int y = compact ? 2 : (base_y + 16);
 
     attron(COLOR_PAIR(5) | A_BOLD);
     center_print(y, "PLAY");
@@ -621,15 +623,32 @@ static void draw_top_bar(void)
     attron(COLOR_PAIR(6));
     mvhline(0, 0, ' ', COLS);
 
-    // score placeholders (score_b/score_w)
-    mvprintw(0, 1,
-             "Game #%d  You=%s  ToMove=%s   Score B %d - W %d   Time B %02d:%02d | W %02d:%02d",
-             my_game_id, my_color,
-             (g_to_move == 0 ? "BLACK" : "WHITE"),
-             score_b, score_w,
-             bm, bs, wm, ws);
+    int compact = (COLS < 95) ? 1 : 0;
+
+    const char *you = my_color[0] ? my_color : "?";
+    const char *tm  = (g_to_move == 0 ? "BLACK" : "WHITE");
+
+    if (!compact)
+    {
+        mvprintw(0, 1,
+            "Game #%d  You=%s  ToMove=%s   Caps B %d - W %d   Time B %02d:%02d | W %02d:%02d",
+            my_game_id, you, tm, score_b, score_w, bm, bs, wm, ws
+        );
+    }
+    else
+    {
+        mvprintw(0, 1, "Game #%d  You=%s  ToMove=%s", my_game_id, you, tm);
+        mvhline(1, 0, ' ', COLS);
+        mvprintw(1, 1,
+            "B %s cap=%d %02d:%02d | W %s cap=%d %02d:%02d",
+            black_nick[0] ? black_nick : "?", score_b, bm, bs,
+            white_nick[0] ? white_nick : "?", score_w, wm, ws
+        );
+    }
+
     attroff(COLOR_PAIR(6));
 }
+
 
 static void draw_bottom_bar(void)
 {
@@ -643,8 +662,15 @@ static void draw_bottom_bar(void)
 void draw_game_screen(void)
 {
     clear();
+
+    int top_bar_h = (COLS < 95) ? 2 : 1;             // jak robisz 2-linijkowe statsy
+    int compact_h = (LINES < 2 * my_game_size + 1 + top_bar_h + 1) ? 1 : 0;
+
     draw_top_bar();
-    draw_bottom_bar();
+
+    // bottom bar tylko jeśli jest miejsce
+    int bottom_bar_h = compact_h ? 0 : 1;
+    if (bottom_bar_h) draw_bottom_bar();
 
     int cell_w = 3;
     int board_w = 1 + my_game_size * (cell_w + 1);
@@ -658,24 +684,25 @@ void draw_game_screen(void)
 
     const int board_h = 2 * my_game_size + 1;
 
-    int top = (LINES - board_h) / 2;
-    int left = (COLS - board_w) / 2;
+    // dostępna wysokość między paskami
+    int avail_h = LINES - top_bar_h - bottom_bar_h;
+    int avail_w = COLS;
 
-    // keep inside screen with top+bottom bars
-    if (top < 1)
-        top = 1;
-    if (left < 0)
-        left = 0;
-    if (top + board_h >= LINES - 1)
-        top = 1;
+    // start rysowania planszy: wycentrowanie w dostępnej przestrzeni
+    int top  = top_bar_h + (avail_h - board_h) / 2;
+    int left = (avail_w - board_w) / 2;
 
-    // optional: color frame/lines stronger
+    if (top < top_bar_h) top = top_bar_h;
+    if (left < 0) left = 0;
+    if (top + board_h > LINES - bottom_bar_h) top = top_bar_h;  
+
     attron(COLOR_PAIR(5) | A_BOLD);
     draw_board_grid(top, left, my_game_size, cell_w);
     attroff(COLOR_PAIR(5) | A_BOLD);
 
     refresh();
 }
+
 
 void draw_gameover_screen(void)
 {
