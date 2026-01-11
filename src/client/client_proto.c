@@ -19,17 +19,51 @@ void parse_server_line(const char *line, Screen *screen) {
 
     int id=0,size=0,players=0;
     char st[32];
+    char name[GAME_NAME_SIZE];
 
-    if (sscanf(line, "GAME %d %d %d %31s", &id, &size, &players, st) == 4) {
+    if (sscanf(line, "GAME %d %d %d %31s", &id, &size, &players, st) >= 4) {
+        // Wyciągnij nazwę gry (wszystko po statusie)
+        const char *p = line;
+        for (int skip = 0; skip < 4 && p; skip++) {
+            p = strchr(p, ' ');
+            if (p) p++;
+        }
+        
+        if (p && *p) {
+            strncpy(name, p, sizeof(name) - 1);
+            name[sizeof(name) - 1] = '\0';
+            // Usuń \n na końcu
+            char *nl = strchr(name, '\n');
+            if (nl) *nl = '\0';
+        } else {
+            snprintf(name, sizeof(name), "Game #%d", id);
+        }
+        
         LobbyStatus s = (strcmp(st, "RUNNING") == 0) ? LOBBY_RUNNING : LOBBY_OPEN;
-        lobby_upsert(&lobby, id, size, players, s);
+        lobby_upsert(&lobby, id, size, players, s, name);
         return;
     }
 
     if (sscanf(line, "EVENT GAME_CREATED %d %d", &id, &size) == 2) {
-        lobby_upsert(&lobby, id, size, 1, LOBBY_OPEN);
+        const char *p = line;
+        for (int skip = 0; skip < 4 && p; skip++) {
+            p = strchr(p, ' ');
+            if (p) p++;
+        }
+        
+        if (p && *p) {
+            strncpy(name, p, sizeof(name) - 1);
+            name[sizeof(name) - 1] = '\0';
+            char *nl = strchr(name, '\n');
+            if (nl) *nl = '\0';
+        } else {
+            snprintf(name, sizeof(name), "Game #%d", id);
+        }
+        
+        lobby_upsert(&lobby, id, size, 1, LOBBY_OPEN, name);
         return;
     }
+
     if (sscanf(line, "EVENT GAME_STARTED %d", &id) == 1) {
         lobby_set_running(&lobby, id);
         return;
@@ -71,6 +105,16 @@ void parse_server_line(const char *line, Screen *screen) {
 
         my_hosting = 0;
         client_clear_board(size2);
+        
+        // WAŻNE: Resetuj timery i statystyki przy starcie nowej gry
+        black_secs = 10 * 60;
+        white_secs = 10 * 60;
+        last_tick = 0;
+        score_b = 0;
+        score_w = 0;
+        prev_board_valid = 0;
+        cur_x = 0;
+        cur_y = 0;
 
         *screen = SCREEN_GAME;
         return;

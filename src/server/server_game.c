@@ -161,18 +161,19 @@ void list_games(Client clients[], int to_fd) {
     send_str(to_fd, "GAMES_BEGIN\n");
 
     for (int i = 0; i < game_count; i++) {
-        char buf[128];
+        char buf[256];
         const char *status =
             (games[i].status == GAME_OPEN) ? "OPEN" : "RUNNING";
 
         int players = (games[i].guest_fd == -1) ? 1 : 2;
 
         snprintf(buf, sizeof(buf),
-                 "GAME %d %d %d %s\n",
+                 "GAME %d %d %d %s %s\n",
                  games[i].id,
                  games[i].size,
                  players,
-                 status);
+                 status,
+                 games[i].game_name);
 
         send_str(to_fd, buf);
     }
@@ -228,7 +229,7 @@ void remove_single_game_of_client(Client clients[], int fd, int gid, const char 
 }
 
 
-int create_game(Client clients[], int host_fd, int size, char pref) {
+int create_game(Client clients[], int host_fd, int size, char pref, const char *custom_name) {
     if (game_count >= MAX_GAMES) return -1;
     if (host_has_game(host_fd)) return -2;
 
@@ -244,18 +245,37 @@ int create_game(Client clients[], int host_fd, int size, char pref) {
     g->guest_fd = -1;
     g->status = GAME_OPEN;
     g->host_color = host_color;
+    
+    // Ustaw nazwę gry
+    if (custom_name && custom_name[0]) {
+        // Użyj custom nazwy
+        strncpy(g->game_name, custom_name, sizeof(g->game_name) - 1);
+        g->game_name[sizeof(g->game_name) - 1] = '\0';
+    } else {
+        // Użyj domyślnej nazwy "<nick> game"
+        const char *host_nick = "player";
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (clients[i].fd == host_fd) {
+                host_nick = clients[i].nick;
+                break;
+            }
+        }
+        snprintf(g->game_name, sizeof(g->game_name), "%s game", host_nick);
+    }
 
     char buf[64];
     snprintf(buf, sizeof(buf), "HOSTED %d %s\n",
              g->id, host_color == 0 ? "BLACK" : "WHITE");
     send_str(host_fd, buf);
 
-    char ev[64];
-    snprintf(ev, sizeof(ev), "EVENT GAME_CREATED %d %d\n", g->id, g->size);
+    char ev[128];
+    snprintf(ev, sizeof(ev), "EVENT GAME_CREATED %d %d %s\n", 
+             g->id, g->size, g->game_name);
     broadcast_subscribed(clients, ev);
 
     return g->id;
 }
+
 int leave_game(Client clients[], int fd, int gid, const char *reason) {
     for (int i = 0; i < game_count; i++) {
         if (games[i].id != gid) continue;

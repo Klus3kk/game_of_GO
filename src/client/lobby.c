@@ -15,16 +15,30 @@ static int find_idx(Lobby *L, int id) {
     return -1;
 }
 
-void lobby_upsert(Lobby *L, int id, int size, int players, LobbyStatus st) {
+void lobby_upsert(Lobby *L, int id, int size, int players, LobbyStatus st, const char *name) {
     int i = find_idx(L, id);
     if (i >= 0) {
         L->g[i].size = size;
         L->g[i].players = players;
         L->g[i].st = st;
+        if (name) {
+            strncpy(L->g[i].name, name, sizeof(L->g[i].name) - 1);
+            L->g[i].name[sizeof(L->g[i].name) - 1] = '\0';
+        }
         return;
     }
     if (L->n >= LOBBY_MAX) return;
-    L->g[L->n++] = (LobbyGame){ .id=id, .size=size, .players=players, .st=st };
+    L->g[L->n].id = id;
+    L->g[L->n].size = size;
+    L->g[L->n].players = players;
+    L->g[L->n].st = st;
+    if (name) {
+        strncpy(L->g[L->n].name, name, sizeof(L->g[L->n].name) - 1);
+        L->g[L->n].name[sizeof(L->g[L->n].name) - 1] = '\0';
+    } else {
+        L->g[L->n].name[0] = '\0';
+    }
+    L->n++;
     if (L->sel >= L->n) L->sel = L->n - 1;
 }
 

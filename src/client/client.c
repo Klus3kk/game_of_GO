@@ -9,6 +9,24 @@
 #include <time.h>
 #include <stdio.h>
 
+void reset_game_state(void) {
+    // Reset timery
+    black_secs = 10 * 60;
+    white_secs = 10 * 60;
+    last_tick = 0;
+    
+    // Reset scores
+    score_b = 0;
+    score_w = 0;
+    
+    // Reset board state
+    prev_board_valid = 0;
+    
+    // Reset kursor
+    cur_x = 0;
+    cur_y = 0;
+}
+
 int main()
 {
     Settings st = {.mouse_support = true, .colours = true, .theme = 0, .nickname = "u1"};
@@ -216,10 +234,19 @@ int main()
             {
                 int size;
                 char pref;
-                if (host_popup(&size, &pref))
+                char game_name[64] = {0};
+                
+                if (host_popup(&size, &pref, game_name))
                 {
-                    char cmd[64];
-                    snprintf(cmd, sizeof(cmd), "HOST %d %c", size, pref);
+                    char cmd[128];
+                    
+                    // Jeśli użytkownik podał nazwę, wyślij ją do serwera
+                    if (game_name[0]) {
+                        snprintf(cmd, sizeof(cmd), "HOST %d %c %s", size, pref, game_name);
+                    } else {
+                        snprintf(cmd, sizeof(cmd), "HOST %d %c", size, pref);
+                    }
+                    
                     my_game_size = size;
                     net_send_line(&net, cmd);
                 }
@@ -358,7 +385,9 @@ int main()
             draw_gameover_screen();
             getch();
 
-            // sprzątanie dopiero po obejrzeniu wyniku
+            // Resetuj stan gry
+            reset_game_state();
+            
             my_hosting = 0;
             my_game_id = -1;
             my_game_size = 0;

@@ -8,6 +8,7 @@
 #define NICK_SIZE 32
 #define MAX_GAMES 25
 #define BOARD_MAX_SIZE 19
+#define GAME_NAME_SIZE 64
 
 typedef enum
 {
@@ -15,20 +16,22 @@ typedef enum
     GAME_RUNNING
 } GameStatus;
 
+
 typedef struct
 {
     int id;
-    int size;       // board size
-    int host_fd;    // who created the game
-    int guest_fd;   // -1 if none
-    int host_color; // 0 = black,1 = white
+    int size;
+    int host_fd;
+    int guest_fd;
+    int host_color;
     GameStatus status;
-    unsigned char board[BOARD_MAX_SIZE * BOARD_MAX_SIZE]; // 0 empty, 1 black, 2 white
-    int to_move;                                          // 0 black, 1 white
+    unsigned char board[BOARD_MAX_SIZE * BOARD_MAX_SIZE];
+    int to_move;
     unsigned char prev_board[BOARD_MAX_SIZE * BOARD_MAX_SIZE];
     int cap_black;
     int cap_white;
-    int consecutive_passes; // optional (if you implement 2-pass end)
+    int consecutive_passes;
+    char game_name[GAME_NAME_SIZE];  
 } Game;
 
 typedef struct
@@ -61,6 +64,6 @@ int remove_group(Game *g, const int *stones, int count);
 
 void list_games(Client clients[], int to_fd);
 int cancel_open_games_of_host(Client clients[], int host_fd);
-int create_game(Client clients[], int host_fd, int size, char pref);
+int create_game(Client clients[], int host_fd, int size, char pref, const char *custom_name);
 void remove_single_game_of_client(Client clients[], int fd, int gid, const char *reason);
 int leave_game(Client clients[], int fd, int gid, const char *reason);

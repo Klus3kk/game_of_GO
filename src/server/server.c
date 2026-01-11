@@ -185,13 +185,16 @@ static void handle_line(Client clients[], int idx, char *line) {
     }
 
 
+
     if (strncmp(line, "HOST ", 5) == 0) {
         int size = 0;
-        char pref = 'R'; // B/W/R
+        char pref = 'R'; 
+        char custom_name[GAME_NAME_SIZE] = {0};
 
+        // Parsuj: HOST <size> <B|W|R> [optional_name]
         int n = sscanf(line, "HOST %d %c", &size, &pref);
         if (n < 1) {
-            send_str(c->fd, "ERR usage: HOST <size> <B|W|R>\n");
+            send_str(c->fd, "ERR usage: HOST <size> <B|W|R> [name]\n");
             return;
         }
 
@@ -202,7 +205,22 @@ static void handle_line(Client clients[], int idx, char *line) {
             return;
         }
 
-        int gid = create_game(clients, c->fd, size, pref);
+        // Sprawdź czy jest custom nazwa
+        const char *name_start = strchr(line + 5, pref);
+        if (name_start) {
+            name_start = strchr(name_start, ' ');
+            if (name_start) {
+                name_start++; // pomiń spację
+                strncpy(custom_name, name_start, sizeof(custom_name) - 1);
+                custom_name[sizeof(custom_name) - 1] = '\0';
+                
+                // Usuń \n
+                char *nl = strchr(custom_name, '\n');
+                if (nl) *nl = '\0';
+            }
+        }
+
+        int gid = create_game(clients, c->fd, size, pref, custom_name);
         if (gid == -1) {
             send_str(c->fd, "ERR server full\n");
             return;
@@ -213,6 +231,7 @@ static void handle_line(Client clients[], int idx, char *line) {
         }
         return;
     }
+
 
 
     if (strncmp(line, "JOIN ", 5) == 0) {

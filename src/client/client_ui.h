@@ -11,11 +11,12 @@ void draw_gameover_screen(void);
 void draw_main_menu(int selected);
 void draw_settings_screen(const Settings *st, int selected);
 void edit_nickname(Settings *st);
+int host_popup(int *out_size, char *out_pref, char *out_game_name);
 
 void draw_play_screen(int selected);
 void draw_play_lobby(void);
 
-int host_popup(int *out_size, char *out_pref);
+// int host_popup(int *out_size, char *out_pref);
 
 void apply_theme(int theme);
 void draw_game_screen(void);
